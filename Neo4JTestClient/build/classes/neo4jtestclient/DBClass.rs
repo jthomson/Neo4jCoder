@@ -1,0 +1,2 @@
+neo4jtestclient.MyStaticRelTypes
+neo4jtestclient.DBClass

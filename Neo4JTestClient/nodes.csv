@@ -1,0 +1,20 @@
+ID;Rels;Type;Data
+0;6;Dictionary;WhoDrugCTest
+1;1;DictionaryLevel;ATC1
+2;1;DictionaryLevel;ATC2
+3;1;DictionaryLevel;ATC3
+4;1;DictionaryLevel;ATC4
+5;1;DictionaryLevel;MedicinalProduct
+6;1;DictionaryLevel;Ingredient
+7;1;BaseTerm;
+8;1;BaseTerm;
+9;1;BaseTerm;
+10;1;BaseTerm;
+11;1;BaseTerm;
+12;BaseTerm;
+13;0;EnglishText;CARDIOVASCULAR SYSTEM
+14;0;EnglishText;ANTIHYPERTENSIVES
+15;0;EnglishText;ANTIADRENERGIC AGENTS, CENTRALLY ACTING
+16;0;EnglishText;Methyldopa
+17;0;EnglishText;Tylenol
+18;0;EnglishText;acetaminophen
