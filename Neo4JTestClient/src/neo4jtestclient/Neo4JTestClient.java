@@ -38,16 +38,10 @@ public class Neo4JTestClient {
      */
     public static void main(String[] args) throws IOException{
         
-        // TODO code application logic here
-        //InitializeGraph();
-        Importer.RunImport("/neoDB", "nodes.csv", "rels.csv");
-        
+        Importer importer = new Importer("/neoDB");
+        importer.runImport();     
     }
     
-    private static void Test() 
-    {
-        
-    }
     
     private static void InitializeGraph()
     {

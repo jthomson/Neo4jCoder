@@ -58,6 +58,7 @@ public class DBClass {
     {
         if (fulltextEnglishTerms != null)
             fulltextEnglishTerms.add( node, propertyText, node.getProperty( propertyText) );
+        
     }
     
     public IndexHits<Node> FindInFullTextIndex(String propertyText, String key)

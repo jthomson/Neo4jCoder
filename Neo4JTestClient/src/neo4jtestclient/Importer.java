@@ -7,164 +7,314 @@ import org.neo4j.graphdb.index.BatchInserterIndex;
 import org.neo4j.index.impl.lucene.LuceneBatchInserterIndexProvider;
 import static org.neo4j.index.impl.lucene.LuceneIndexImplementation.EXACT_CONFIG;
 
-import java.io.BufferedReader;
+import java.util.Map;
+
 import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
-import java.util.Map;
+import java.io.BufferedReader;
+
 import java.lang.Exception;
+import java.util.HashMap;
+
 import org.neo4j.graphdb.Node;
 import org.neo4j.graphdb.index.Index;
+import org.neo4j.graphdb.index.IndexHits;
+import org.neo4j.graphdb.Transaction;
 import org.neo4j.graphdb.index.IndexManager;
 import org.neo4j.helpers.collection.MapUtil;
-
+import org.neo4j.graphdb.GraphDatabaseService;
 import static org.neo4j.helpers.collection.MapUtil.map;
 import static org.neo4j.helpers.collection.MapUtil.stringMap;
+import org.neo4j.index.impl.lucene.LuceneIndexImplementation;
+import org.neo4j.kernel.EmbeddedGraphDatabase;
+import sun.misc.GC;
 
 public class Importer {
     private static Importer.Report m_Report;
-    private BatchInserterImpl m_Db;
-    private BatchInserterIndexProvider m_Provider;
-    private BatchInserterIndex m_NodeIndex;
-    private BatchInserterIndex m_RelationshipIndex;
+    //private BatchInserterImpl m_Db;
+    private EmbeddedGraphDatabase m_Db;
+    private Node m_RootNode;
+    private Node m_ATC1Node;
+    private Node m_ATC2Node;
+    private Node m_ATC3Node;
+    private Node m_ATC4Node;
+    private Node m_IngredientNode;
+    private Node m_MPNode;
+    private Transaction m_Tran;
+    private boolean m_Init;
+    private String m_DbLocation;
+    
+    private Index<Node> m_EnglishTextIndex;
+    private int m_NumEnglishNodes;
+    
+    private Index<Node> m_CodeIndex;
+    private int m_NumCodeNodes;
 
-    private static String m_Delimiter = ";";
+    private static String s_Delimiter = ";";
+    
 
-    public Importer(File graphDb) {
-        final Map<String, String> config = getConfig();
-        m_Db = new BatchInserterImpl(graphDb.getAbsolutePath(), config);
+    public Importer(String dbLocation) {
+        
+        if (dbLocation == null || dbLocation.length() == 0) {
+            throw new IllegalArgumentException("dbLocation must be provided!");
+        }     
+            
+        //final Map<String, String> config = getConfig();
+        m_DbLocation = dbLocation;
+        m_Db = new EmbeddedGraphDatabase(m_DbLocation);
+        
+        m_RootNode = m_Db.getReferenceNode();
+        if (m_RootNode == null) m_RootNode = m_Db.createNode();
+        
         m_Report = new Importer.Report(100000, 100);
-        m_Provider = new LuceneBatchInserterIndexProvider(m_Db);
-        m_NodeIndex = m_Provider.nodeIndex("terms", org.neo4j.index.impl.lucene.LuceneIndexImplementation.EXACT_CONFIG);
-        m_RelationshipIndex = m_Provider.relationshipIndex("terms", stringMap("provider", "lucene", "type", "exact"));     
+        
+        m_EnglishTextIndex = m_Db.index().forNodes("EnglishText", LuceneIndexImplementation.EXACT_CONFIG);
+        m_NumEnglishNodes = 0;
+        
+        m_CodeIndex = m_Db.index().forNodes("Code", LuceneIndexImplementation.EXACT_CONFIG);
+        m_NumCodeNodes = 0;
+        m_Init = true;
+        
+        File file = new File(m_DbLocation);
+        deleteFileOrDirectory(file);
+        if (!file.exists()) file.mkdirs();
     }
 
+    private void startTransaction() {
+        m_Tran = m_Db.beginTx();
+    }
+    
+    private void tranSuccess() {
+        m_Tran.success();
+    }
+    
     private Map<String, String> getConfig() {
         return stringMap(
             "dump_configuration", "true",
             "cache_type", "none",
-            "neostore.propertystore.db.index.keys.mapped_memory", "5M",
-            "neostore.propertystore.db.index.mapped_memory", "5M",
-            "neostore.nodestore.db.mapped_memory", "50M",
+            "neostore.propertystore.db.index.keys.mapped_memory", "50M",
+            "neostore.propertystore.db.index.mapped_memory", "50M",
+            "neostore.nodestore.db.mapped_memory", "200M",
             "neostore.relationshipstore.db.mapped_memory", "250M",
             "neostore.propertystore.db.mapped_memory", "200M",
             "neostore.propertystore.db.strings.mapped_memory", "100M");
     }
 
-    public static void RunImport(String dbLocation, String nodeFileLocation, String relFileLocation) throws IOException
+    public void runImport() throws IOException
     {
-        if (nodeFileLocation==null || nodeFileLocation.trim().length()==0)
-        {    
-            throw new IllegalArgumentException("nodeFileLocation must be provided!");
+        try {
+            importFile("C:\\Users\\jthomson\\Desktop\\ATCs.csv");
+            importFile("C:\\Users\\jthomson\\Desktop\\MPs.csv");
+            importFile("C:\\Users\\jthomson\\Desktop\\INGs.csv");
         }
-        if (relFileLocation==null || relFileLocation.trim().length()==0)
-        {    
-            throw new IllegalArgumentException("relFileLocation must be provided!");
+        finally {
+            finish();
         }
-        
-        File nodes = new File(nodeFileLocation);
-        File rels = new File(relFileLocation);
-        
-        RunImport(dbLocation, nodes, rels);  
+     
     }
-    
-    public static void RunImport(String dbLocation, File nodeFile, File relationshipFile) throws IOException
-    {
-        if (dbLocation==null || dbLocation.trim().length()==0) {    
-            throw new IllegalArgumentException("dbLocation must be provided!");
-        }
-        if (nodeFile == null) {
+   
+    private void importFile(String nodeFileLocation) throws IOException
+    {   
+        File nodeFile = new File(nodeFileLocation);
+        
+        if (nodeFile == null || nodeFile.length() == 0) {
             throw new IllegalArgumentException("nodeFile must be provided!");
         }
-        if (relationshipFile == null) {
-            throw new IllegalArgumentException("relationshipFile must be provided!");
-        }
         
-        File graphDb = new File(dbLocation);
-        deleteFileOrDirectory(graphDb);
-        if (!graphDb.exists()) graphDb.mkdirs();
-        Importer importBatch = new Importer(graphDb);
-        try {
-            if (nodeFile.exists()) importBatch.importNodes(nodeFile);
-            if (relationshipFile.exists()) importBatch.importRelationships(relationshipFile);
-        } finally {
-            importBatch.finish();
-        }    
+        startTransaction();
+       
+        if (m_Init) {
+            createDictionaryAndLevels();
+            m_Init = false;                
+        }
+        importDataNodes(nodeFile);
+
+        tranSuccess();
+        outputResults(nodeFileLocation);
+        // try getting active handlers for indexes
+//        System.gc();
+//        m_EnglishTextIndex = m_Db.index().forNodes("EnglishText", LuceneIndexImplementation.EXACT_CONFIG);
+//        m_CodeIndex = m_Db.index().forNodes("Code", LuceneIndexImplementation.EXACT_CONFIG);
+
     }
 
-    /* IDs used are provided in input file
+    private void outputResults(String nodeFileLocation ) {
+        
+        long totalNodeCount = m_Db.getConfig().getGraphDbModule().getNodeManager().getNumberOfIdsInUse(Node.class);
+              
+        System.out.println("~~Results for input file from: " + nodeFileLocation + "~~");
+        System.out.println("English text nodes created: " + m_NumEnglishNodes);
+        System.out.println("Base nodes created: " + m_NumCodeNodes);
+        System.out.println("Total Node count: " + totalNodeCount);
+    }
+    
+    /*
+     * Manually create whodrug dictionary structure for now.
+    */
+    private void createDictionaryAndLevels() {
+        
+        m_RootNode.setProperty(Constants.Node.Type, Constants.Node.Dictionary);
+        m_RootNode.setProperty(Constants.Property.DictionaryName, "WhoDrugC");
+        
+        m_ATC1Node = createLevelNodeAndRelationship("ATC1");
+        m_ATC2Node = createLevelNodeAndRelationship("ATC2");
+        m_ATC3Node = createLevelNodeAndRelationship("ATC3");
+        m_ATC4Node = createLevelNodeAndRelationship("ATC4");
+        m_IngredientNode = createLevelNodeAndRelationship("Ingredient");
+        m_MPNode = createLevelNodeAndRelationship("MP");
+        
+    }
+
+    private Node getLevelNode(String level) {
+        
+        switch(level)
+        {
+            case "ATC1": 
+                return m_ATC1Node;
+            case "ATC2": 
+                return m_ATC2Node;
+            case "ATC3": 
+                return m_ATC3Node;
+            case "ATC4": 
+                return m_ATC4Node;
+            case "ING": 
+                return m_IngredientNode;
+            case "MP": 
+                return m_MPNode;
+            default:
+                return null;     
+        }
+    }
+    private Node createLevelNodeAndRelationship(String levelName) {
+        
+        Node levelNode = m_Db.createNode();
+        levelNode.setProperty(Constants.Node.Type, Constants.Node.Level);
+        levelNode.setProperty(Constants.Property.LevelName, levelName);
+        
+        m_RootNode.createRelationshipTo(levelNode, DictRelTypes.DictionaryLevel);
+        
+        return levelNode;
+    }
+    
+    /* 
     * 
     */
-    private void importNodes(File file) throws IOException {
+    private void importDataNodes(File file) throws IOException {
+         
         BufferedReader bf = new BufferedReader(new FileReader(file));
-        final Importer.Data data = new Importer.Data(bf.readLine(), m_Delimiter, 0);
-        String line;
-        long id;
+        final Importer.Data data = new Importer.Data(bf.readLine(), s_Delimiter, 0);
+        String line, level, term, code;
         Map<String,Object> map;
         m_Report.reset();
+        int counter = 0;
         while ((line = bf.readLine()) != null) {
+            
+            counter++;
+            
+            // skip blank lines
+            if (line.trim().length() == 0) {
+                continue;
+            }
             map = map(data.update(line));
-            id =  Long.parseLong(map.get("ID").toString());
-            m_Db.createNode(map);
-            m_NodeIndex.add(id, map);
+                      
+            // odd but necessary hack...
+            level = map.get(map.keySet().toArray()[0]).toString();
+            term = map.get("Term").toString();
+            code = map.get("Code").toString();
+            
+            importCreateNode(level, term, code);
+            
+            // save memory.
+            if (counter % 100000 == 0) {
+                m_Tran.success();
+                m_Tran.finish();
+                           
+                System.gc();
+                m_Tran = m_Db.beginTx();
+            }
            
             m_Report.dots();
         }
         m_Report.finishImport("Nodes");
     }
 
-    private void importRelationships(File file) throws IOException {
-        BufferedReader bf = new BufferedReader(new FileReader(file));
-        final Importer.Data data = new Importer.Data(bf.readLine(), m_Delimiter, 0);
-        Object[] rel = new Object[3];
-        final Importer.Type type = new Importer.Type();
-        String line;
-        long relationshipId;
-
-        m_Report.reset();
-        while ((line = bf.readLine()) != null) {
-            final Map<String, Object> properties = map(data.update(line, rel));
-            relationshipId = m_Db.createRelationship(id(rel[0]), id(rel[1]), type.update(rel[2]), properties);
-            m_RelationshipIndex.add(relationshipId, properties);
-            m_Report.dots();
+    /*
+     * Imports node, creating  english text and code nodes if needed.
+     * 
+     * Level is assumed to exist.
+     */
+    private void importCreateNode(String level, String term, String code)
+    {
+        if (level==null || level.trim().length()==0) {    
+            throw new IllegalArgumentException("level must be provided!");
         }
-        m_Report.finishImport("Relationships");
+        if (term==null || term.trim().length()==0) {    
+            throw new IllegalArgumentException("term must be provided!");
+        }
+        if (code==null || code.trim().length()==0) {    
+            throw new IllegalArgumentException("code must be provided!");
+        }
+        
+       // get english and code nodes or create if they don't exist
+       Node englishNode = getEnglishNodeByText(term);
+       if (englishNode == null) {
+           englishNode = createEnglishNode(term);
+       }
+       
+       Node codeNode = getCodeNodeByCode(code);
+       if (codeNode == null) {
+           codeNode = createCodeNode(term);
+       }
+       
+       Node levelNode = getLevelNode(level);
+       levelNode.createRelationshipTo(codeNode,DictRelTypes.LevelTerm);
+       codeNode.createRelationshipTo(englishNode,DictRelTypes.English);
+        
     }
     
-    static class Data {
-        private final Object[] data;
-        private final int offset;
-        private final String delim;
-
-        public Data(String header, String delim, int offset) {
-            this.offset = offset;
-            this.delim = delim;
-            String[] fields = header.split(delim);
-            data = new Object[(fields.length - offset) * 2];
-            for (int i = 0; i < fields.length - offset; i++) {
-                data[i * 2] = fields[i + offset];
-            }
-        }
-
-        public Object[] update(String line, Object... header) {
-            final String[] values = line.split(delim);
-            if (header.length > 0) {
-                System.arraycopy(values, 0, header, 0, header.length);
-            }
-            for (int i = 0; i < values.length - offset; i++) {
-                data[i * 2 + 1] = values[i + offset];
-            }
-            return data;
-        }
-
+    private Node createEnglishNode(String term) {
+        
+        Node termNode = m_Db.createNode();
+        termNode.setProperty(Constants.Node.Type, Constants.Node.English);
+        termNode.setProperty(Constants.Property.EnglishText, term);
+        
+        m_EnglishTextIndex.add(termNode, Constants.Property.EnglishText, term);
+        m_NumEnglishNodes++;
+         
+        return termNode;
     }
-
+    
+    private Node createCodeNode(String code) {
+        
+        Node codeNode = m_Db.createNode();
+        codeNode.setProperty(Constants.Node.Type, Constants.Node.Base);
+        codeNode.setProperty(Constants.Property.Code, code);
+        
+        m_CodeIndex.add(codeNode, Constants.Property.Code, code);
+        m_NumCodeNodes++;
+        
+        return codeNode;      
+    }
+    
+    private Node getEnglishNodeByText(String text) {
+     
+        return m_EnglishTextIndex.get(Constants.Property.EnglishText, text).getSingle();   
+    }
+    
+    private Node getCodeNodeByCode(String code) {
+        
+        return m_CodeIndex.get(Constants.Property.Code, code).getSingle(); 
+    }
+   
     private void finish() {
+        
+        if (m_Tran != null) m_Tran.finish();        
         m_Db.shutdown();
         m_Report.finish();
     }
         
-    private static void deleteFileOrDirectory(final File file)
+    public static void deleteFileOrDirectory(final File file)
     {
         if (!file.exists())
         {
@@ -183,7 +333,19 @@ public class Importer {
             file.delete();
         }
     }
-        
+      
+    enum DictRelTypes implements RelationshipType
+    {
+        DictionaryLevel,
+        LevelTerm,
+        TermCode,
+        English,
+        ChildTerm,
+        TermComponent
+    }
+    
+    
+    // report class from batch implemntor used for import time reporting
     static class Report {
         private final long batch;
         private final long dots;
@@ -233,5 +395,35 @@ public class Importer {
 
     private long id(Object id) {
         return Long.parseLong(id.toString());
+    }
+    
+    static class Data 
+    {
+        private final Object[] data;
+        private final int offset;
+        private final String delim;
+        private String[] fields;
+        private String[] values;
+
+        public Data(String header, String delim, int offset) {
+            this.offset = offset;
+            this.delim = delim;
+            this.fields = header.split(delim);
+            data = new Object[(fields.length - offset) * 2];
+            for (int i = 0; i < fields.length - offset; i++) {
+                data[i * 2] = fields[i + offset];
+            }
+        }
+
+        public Object[] update(String line, Object... header) {
+            values = line.split(delim);
+            if (header.length > 0) {
+                System.arraycopy(values, 0, header, 0, header.length);
+            }
+            for (int i = 0; i < values.length - offset; i++) {
+                data[i * 2 + 1] = values[i + offset];
+            }
+            return data;
+        }
     }
 }
