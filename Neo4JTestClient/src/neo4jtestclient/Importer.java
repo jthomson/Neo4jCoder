@@ -60,7 +60,6 @@ public class Importer {
             throw new IllegalArgumentException("dbLocation must be provided!");
         }     
             
-        //final Map<String, String> config = getConfig();
         m_DbLocation = dbLocation;
         m_Db = new EmbeddedGraphDatabase(m_DbLocation);
         
@@ -69,34 +68,29 @@ public class Importer {
         
         m_Report = new Importer.Report(100000, 100);
         
-        m_EnglishTextIndex = m_Db.index().forNodes("EnglishText", LuceneIndexImplementation.EXACT_CONFIG);
+        m_EnglishTextIndex = m_Db.index().forNodes("EnglishText", LuceneIndexImplementation.FULLTEXT_CONFIG );
         m_NumEnglishNodes = 0;
         
-        m_CodeIndex = m_Db.index().forNodes("Code", LuceneIndexImplementation.EXACT_CONFIG);
+        m_CodeIndex = m_Db.index().forNodes("Code", EXACT_CONFIG);
         m_NumCodeNodes = 0;
+        
+        // used in case multiple imports made to same instance
         m_Init = true;
         
         File file = new File(m_DbLocation);
         deleteFileOrDirectory(file);
         if (!file.exists()) file.mkdirs();
     }
-
-    private void startTransaction() {
-        m_Tran = m_Db.beginTx();
-    }
     
-    private void tranSuccess() {
-        m_Tran.success();
-    }
     
     private Map<String, String> getConfig() {
         return stringMap(
             "dump_configuration", "true",
             "cache_type", "none",
-            "neostore.propertystore.db.index.keys.mapped_memory", "50M",
-            "neostore.propertystore.db.index.mapped_memory", "50M",
-            "neostore.nodestore.db.mapped_memory", "200M",
-            "neostore.relationshipstore.db.mapped_memory", "250M",
+            "neostore.propertystore.db.index.keys.mapped_memory", "10M",
+            "neostore.propertystore.db.index.mapped_memory", "10M",
+            "neostore.nodestore.db.mapped_memory", "300M",
+            "neostore.relationshipstore.db.mapped_memory", "150M",
             "neostore.propertystore.db.mapped_memory", "200M",
             "neostore.propertystore.db.strings.mapped_memory", "100M");
     }
@@ -104,9 +98,11 @@ public class Importer {
     public void runImport() throws IOException
     {
         try {
-            importFile("C:\\Users\\jthomson\\Desktop\\ATCs.csv");
-            importFile("C:\\Users\\jthomson\\Desktop\\MPs.csv");
-            importFile("C:\\Users\\jthomson\\Desktop\\INGs.csv");
+            //importFile("C:\\Users\\jthomson\\Desktop\\ATCs.csv");
+            //importFile("C:\\Users\\jthomson\\Desktop\\MPs.csv");
+            //importFile("C:\\Users\\jthomson\\Desktop\\INGs.csv");
+            importFile("C:\\Users\\jthomson\\Desktop\\FirstVersion.csv");
+            
         }
         finally {
             finish();
@@ -122,7 +118,7 @@ public class Importer {
             throw new IllegalArgumentException("nodeFile must be provided!");
         }
         
-        startTransaction();
+        m_Tran = m_Db.beginTx();
        
         if (m_Init) {
             createDictionaryAndLevels();
@@ -130,12 +126,8 @@ public class Importer {
         }
         importDataNodes(nodeFile);
 
-        tranSuccess();
+        m_Tran.success();
         outputResults(nodeFileLocation);
-        // try getting active handlers for indexes
-//        System.gc();
-//        m_EnglishTextIndex = m_Db.index().forNodes("EnglishText", LuceneIndexImplementation.EXACT_CONFIG);
-//        m_CodeIndex = m_Db.index().forNodes("Code", LuceneIndexImplementation.EXACT_CONFIG);
 
     }
 
@@ -230,7 +222,6 @@ public class Importer {
                 m_Tran.success();
                 m_Tran.finish();
                            
-                System.gc();
                 m_Tran = m_Db.beginTx();
             }
            
@@ -262,13 +253,13 @@ public class Importer {
            englishNode = createEnglishNode(term);
        }
        
-       Node codeNode = getCodeNodeByCode(code);
+       Node codeNode = getCodeNodeByCodeAndLevel(code, level);
        if (codeNode == null) {
-           codeNode = createCodeNode(term);
+           codeNode = createCodeNode(code, level);
        }
        
        Node levelNode = getLevelNode(level);
-       levelNode.createRelationshipTo(codeNode,DictRelTypes.LevelTerm);
+       levelNode.createRelationshipTo(codeNode,DictRelTypes.LevelCode);
        codeNode.createRelationshipTo(englishNode,DictRelTypes.English);
         
     }
@@ -285,16 +276,22 @@ public class Importer {
         return termNode;
     }
     
-    private Node createCodeNode(String code) {
+    private Node createCodeNode(String code, String level) {
         
         Node codeNode = m_Db.createNode();
         codeNode.setProperty(Constants.Node.Type, Constants.Node.Base);
         codeNode.setProperty(Constants.Property.Code, code);
+        codeNode.setProperty(Constants.Property.LevelName, level);
         
-        m_CodeIndex.add(codeNode, Constants.Property.Code, code);
+        String key = getCodeNodeKey(code, level);
+        m_CodeIndex.add(codeNode, Constants.Property.CodeNodeKey, key);
         m_NumCodeNodes++;
         
         return codeNode;      
+    }
+    
+    private String getCodeNodeKey(String code, String level) {
+        return String.format("%s%s%s", code, s_Delimiter, level);
     }
     
     private Node getEnglishNodeByText(String text) {
@@ -302,16 +299,15 @@ public class Importer {
         return m_EnglishTextIndex.get(Constants.Property.EnglishText, text).getSingle();   
     }
     
-    private Node getCodeNodeByCode(String code) {
+    private Node getCodeNodeByCodeAndLevel(String code, String level) {
         
-        return m_CodeIndex.get(Constants.Property.Code, code).getSingle(); 
+        return m_CodeIndex.get(Constants.Property.CodeNodeKey, getCodeNodeKey(code, level)).getSingle(); 
     }
    
     private void finish() {
         
         if (m_Tran != null) m_Tran.finish();        
         m_Db.shutdown();
-        m_Report.finish();
     }
         
     public static void deleteFileOrDirectory(final File file)
@@ -337,7 +333,7 @@ public class Importer {
     enum DictRelTypes implements RelationshipType
     {
         DictionaryLevel,
-        LevelTerm,
+        LevelCode,
         TermCode,
         English,
         ChildTerm,
@@ -362,10 +358,6 @@ public class Importer {
             batchTime = time = System.currentTimeMillis();
         }
 
-        public void finish() {
-            System.out.println((System.currentTimeMillis() - total) / 1000 + " seconds ");
-        }
-
         public void dots() {
             if ((++count % dots) != 0) return;
             System.out.print(".");
@@ -376,7 +368,9 @@ public class Importer {
         }
 
         public void finishImport(String type) {
+            
             System.out.println("\nImporting " + count + " " + type + " took " + (System.currentTimeMillis() - time) / 1000 + " seconds ");
+            System.out.println("Thousands of total " + type + " created/second: " + count/(double)time);
         }
     }
 

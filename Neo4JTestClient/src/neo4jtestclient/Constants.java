@@ -24,7 +24,9 @@ public final class Constants {
         public final static String EnglishText = "EnglishText";
         public final static String Code = "Code";
         public final static String DictionaryName = "DictionaryName";
-        public final static String LevelName = "LevelName";      
+        public final static String LevelName = "LevelName";  
+        
+        public final static String CodeNodeKey="CNKey";
     }
     
     
