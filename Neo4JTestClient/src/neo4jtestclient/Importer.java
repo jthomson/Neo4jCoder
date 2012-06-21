@@ -40,7 +40,7 @@ public class Importer {
     private Node m_ATC3Node;
     private Node m_ATC4Node;
     private Node m_IngredientNode;
-    private Node m_MPNode;
+    private Node m_MPNode; 
     private Transaction m_Tran;
     private boolean m_Init;
     private String m_DbLocation;
@@ -210,7 +210,7 @@ public class Importer {
             }
             map = map(data.update(line));
                       
-            // odd but necessary hack...
+            // odd but necessary hack...BOM characters suck.
             level = map.get(map.keySet().toArray()[0]).toString();
             term = map.get("Term").toString();
             code = map.get("Code").toString();
