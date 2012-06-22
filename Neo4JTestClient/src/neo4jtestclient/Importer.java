@@ -45,6 +45,9 @@ public class Importer {
     private boolean m_Init;
     private String m_DbLocation;
     
+    private HashMap m_Components;
+    private HashMap m_Levels;
+    
     private Index<Node> m_EnglishTextIndex;
     private int m_NumEnglishNodes;
     
@@ -61,6 +64,11 @@ public class Importer {
         }     
             
         m_DbLocation = dbLocation;
+        
+        File file = new File(m_DbLocation);
+        deleteFileOrDirectory(file);
+        if (!file.exists()) file.mkdirs();
+        
         m_Db = new EmbeddedGraphDatabase(m_DbLocation);
         
         m_RootNode = m_Db.getReferenceNode();
@@ -77,9 +85,9 @@ public class Importer {
         // used in case multiple imports made to same instance
         m_Init = true;
         
-        File file = new File(m_DbLocation);
-        deleteFileOrDirectory(file);
-        if (!file.exists()) file.mkdirs();
+        m_Components = new HashMap();
+        m_Levels = new HashMap();
+        
     }
     
     
@@ -97,20 +105,34 @@ public class Importer {
 
     public void runImport() throws IOException
     {
-        try {
-            //importFile("C:\\Users\\jthomson\\Desktop\\ATCs.csv");
-            //importFile("C:\\Users\\jthomson\\Desktop\\MPs.csv");
-            //importFile("C:\\Users\\jthomson\\Desktop\\INGs.csv");
-            importFile("C:\\Users\\jthomson\\Desktop\\FirstVersion.csv");
+        try {      
+            if (m_Init) {
+                 setupDictionaryBase();
+            }
+                      
+            //importTermFile("C:\\Users\\jthomson\\Desktop\\FirstVersion.csv");
+            importComponentFile("C:\\Users\\jthomson\\Desktop\\Components.csv");
             
-        }
-        finally {
+            outputResults();
+            
+        } finally {
             finish();
         }
      
     }
+    
+    private void setupDictionaryBase() {
+        
+        m_Tran = m_Db.beginTx();
+        createDictionaryAndLevels();
+        createComponentLevelNodes();
+        m_Tran.success();
+        m_Tran.finish();
+        m_Init = false;
+        
+    }
    
-    private void importFile(String nodeFileLocation) throws IOException
+    private void importComponentFile(String nodeFileLocation) throws IOException
     {   
         File nodeFile = new File(nodeFileLocation);
         
@@ -120,22 +142,77 @@ public class Importer {
         
         m_Tran = m_Db.beginTx();
        
-        if (m_Init) {
-            createDictionaryAndLevels();
-            m_Init = false;                
-        }
-        importDataNodes(nodeFile);
+        importComponentDataNodes(nodeFile);
 
         m_Tran.success();
-        outputResults(nodeFileLocation);
+
+    }
+    
+        private void importComponentDataNodes(File file) throws IOException {
+         
+        BufferedReader bf = new BufferedReader(new FileReader(file));
+        final Importer.Data data = new Importer.Data(bf.readLine(), s_Delimiter, 0);
+        String line, level, type, value;
+        Map<String,Object> map;
+        m_Report.reset();
+        int counter = 0;
+        while ((line = bf.readLine()) != null) {
+            
+            counter++;
+            
+            // skip blank lines
+            if (line.trim().length() == 0) {
+                continue;
+            }
+            
+            
+            map = map(data.update(line));
+                      
+            level = map.get("Level").toString();
+            type = map.get("Type").toString();
+            value = map.get("Value").toString();
+            
+            addComponentNode(level, type, value);
+            
+            // save memory.
+            if (counter % 100000 == 0) {
+                m_Tran.success();
+                m_Tran.finish();
+                
+                m_Tran = null;
+                m_Tran = m_Db.beginTx();
+            }
+           
+            m_Report.dots();
+        }
+        m_Report.finishImport("Nodes");
+    }
+    
+    private void importTermFile(String nodeFileLocation) throws IOException
+    {   
+        File nodeFile = new File(nodeFileLocation);
+        
+        if (nodeFile == null || nodeFile.length() == 0) {
+            throw new IllegalArgumentException("nodeFile must be provided!");
+        }
+        
+        m_Tran = m_Db.beginTx();
+       
+        importTermDataNodes(nodeFile);
+
+        m_Tran.success();
 
     }
 
-    private void outputResults(String nodeFileLocation ) {
+    private void createRandomTermComponentRelationshipByLevel(String level) {
+        
+    }
+    
+    public void outputResults() {
         
         long totalNodeCount = m_Db.getConfig().getGraphDbModule().getNodeManager().getNumberOfIdsInUse(Node.class);
               
-        System.out.println("~~Results for input file from: " + nodeFileLocation + "~~");
+        System.out.println("~~Results for data load:");
         System.out.println("English text nodes created: " + m_NumEnglishNodes);
         System.out.println("Base nodes created: " + m_NumCodeNodes);
         System.out.println("Total Node count: " + totalNodeCount);
@@ -149,42 +226,84 @@ public class Importer {
         m_RootNode.setProperty(Constants.Node.Type, Constants.Node.Dictionary);
         m_RootNode.setProperty(Constants.Property.DictionaryName, "WhoDrugC");
         
-        m_ATC1Node = createLevelNodeAndRelationship("ATC1");
-        m_ATC2Node = createLevelNodeAndRelationship("ATC2");
-        m_ATC3Node = createLevelNodeAndRelationship("ATC3");
-        m_ATC4Node = createLevelNodeAndRelationship("ATC4");
-        m_IngredientNode = createLevelNodeAndRelationship("Ingredient");
-        m_MPNode = createLevelNodeAndRelationship("MP");
+        m_ATC1Node = addLevelNodeAndRelationship(Constants.DictionaryLevel.ATC1);
+        m_ATC2Node = addLevelNodeAndRelationship(Constants.DictionaryLevel.ATC2);
+        m_ATC3Node = addLevelNodeAndRelationship(Constants.DictionaryLevel.ATC3);
+        m_ATC4Node = addLevelNodeAndRelationship(Constants.DictionaryLevel.ATC4);
+        m_IngredientNode = addLevelNodeAndRelationship(Constants.DictionaryLevel.Ingredient);
+        m_MPNode = addLevelNodeAndRelationship(Constants.DictionaryLevel.MP);
         
     }
-
+    
+    private void createComponentLevelNodes() {
+        
+        addComponentLevelNode("DRUGRECORDNUMBER", Constants.DictionaryLevel.Ingredient);
+        addComponentLevelNode("SEQUENCENUMBER1", Constants.DictionaryLevel.Ingredient);
+        addComponentLevelNode("SEQUENCENUMBER2", Constants.DictionaryLevel.Ingredient);
+        addComponentLevelNode("SEQUENCENUMBER3", Constants.DictionaryLevel.Ingredient);
+        addComponentLevelNode("SEQUENCENUMBER4", Constants.DictionaryLevel.Ingredient);
+        addComponentLevelNode("GENERIC", Constants.DictionaryLevel.Ingredient);
+        addComponentLevelNode("NAMESPECIFIER", Constants.DictionaryLevel.Ingredient);
+        addComponentLevelNode("MARKETINGAUTHORIZATIONNUMBER", Constants.DictionaryLevel.Ingredient);
+        addComponentLevelNode("MARKETINGAUTHORIZATIONDATE", Constants.DictionaryLevel.Ingredient);
+        addComponentLevelNode("MARKETINGAUTHORIZATIONWITHDRAWALDATE", Constants.DictionaryLevel.Ingredient);
+        addComponentLevelNode("COUNTRY", Constants.DictionaryLevel.Ingredient);
+        addComponentLevelNode("COMPANY", Constants.DictionaryLevel.Ingredient);
+        addComponentLevelNode("COMPANYCOUNTRY", Constants.DictionaryLevel.Ingredient);
+        addComponentLevelNode("MARKETINGAUTHORIZATIONHOLDER", Constants.DictionaryLevel.Ingredient);
+        addComponentLevelNode("MARKETINGAUTHORIZATIONHOLDERCOUNTRY", Constants.DictionaryLevel.Ingredient);
+        addComponentLevelNode("SOURCEYEAR", Constants.DictionaryLevel.Ingredient);
+        addComponentLevelNode("SOURCE", Constants.DictionaryLevel.Ingredient);
+        addComponentLevelNode("SOURCECOUNTRY", Constants.DictionaryLevel.Ingredient);
+        addComponentLevelNode("PRODUCTTYPE", Constants.DictionaryLevel.Ingredient);
+        addComponentLevelNode("PRODUCTGROUP", Constants.DictionaryLevel.Ingredient);
+        addComponentLevelNode("PRODUCTGROUPDATERECORDED", Constants.DictionaryLevel.Ingredient);
+        addComponentLevelNode("CREATEDATE", Constants.DictionaryLevel.Ingredient);
+        addComponentLevelNode("DATECHANGED", Constants.DictionaryLevel.Ingredient);
+        addComponentLevelNode("INGREDIENTCREATEDATE", Constants.DictionaryLevel.MP);
+        addComponentLevelNode("QUANTITY", Constants.DictionaryLevel.MP);
+        addComponentLevelNode("QUANTITY2", Constants.DictionaryLevel.MP);
+        addComponentLevelNode("UNIT", Constants.DictionaryLevel.MP);
+        addComponentLevelNode("PHARMACEUTICALFORM", Constants.DictionaryLevel.MP);
+        addComponentLevelNode("ROUTEOFADMINISTRATION", Constants.DictionaryLevel.MP);
+        addComponentLevelNode("NUMBEROFINGREDIENTS", Constants.DictionaryLevel.MP);
+        addComponentLevelNode("PHARMACEUTICALFORMCREATEDATE", Constants.DictionaryLevel.MP);
+        addComponentLevelNode("SUBSTANCE", Constants.DictionaryLevel.MP);
+        addComponentLevelNode("CASNUMBER", Constants.DictionaryLevel.MP);
+        addComponentLevelNode("LANGUAGECODE", Constants.DictionaryLevel.MP);
+    }
+    
+    private void addComponentLevelNode(String name, String level) {
+        
+        Node componentLevelNode = m_Db.createNode();
+        componentLevelNode.setProperty(Constants.Node.Type, Constants.Node.BaseComponent);
+        componentLevelNode.setProperty(Constants.Property.ComponentName, name);
+        
+        Node levelNode = getLevelNode(level);
+        levelNode.createRelationshipTo(componentLevelNode, DictRelTypes.LevelComponent);
+        
+        m_Components.put(name, componentLevelNode);
+        
+    }
+    
+    private Node getComponentLevelNode(String component) {
+    
+        return (Node)m_Components.get(component);
+    }
+    
     private Node getLevelNode(String level) {
         
-        switch(level)
-        {
-            case "ATC1": 
-                return m_ATC1Node;
-            case "ATC2": 
-                return m_ATC2Node;
-            case "ATC3": 
-                return m_ATC3Node;
-            case "ATC4": 
-                return m_ATC4Node;
-            case "ING": 
-                return m_IngredientNode;
-            case "MP": 
-                return m_MPNode;
-            default:
-                return null;     
-        }
+        return (Node)m_Levels.get(level);
+      
     }
-    private Node createLevelNodeAndRelationship(String levelName) {
+    private Node addLevelNodeAndRelationship(String levelName) {
         
         Node levelNode = m_Db.createNode();
         levelNode.setProperty(Constants.Node.Type, Constants.Node.Level);
         levelNode.setProperty(Constants.Property.LevelName, levelName);
         
         m_RootNode.createRelationshipTo(levelNode, DictRelTypes.DictionaryLevel);
+        m_Levels.put(levelName, levelNode);
         
         return levelNode;
     }
@@ -192,7 +311,7 @@ public class Importer {
     /* 
     * 
     */
-    private void importDataNodes(File file) throws IOException {
+    private void importTermDataNodes(File file) throws IOException {
          
         BufferedReader bf = new BufferedReader(new FileReader(file));
         final Importer.Data data = new Importer.Data(bf.readLine(), s_Delimiter, 0);
@@ -208,20 +327,22 @@ public class Importer {
             if (line.trim().length() == 0) {
                 continue;
             }
+            
+            
             map = map(data.update(line));
                       
-            // odd but necessary hack...BOM characters suck.
-            level = map.get(map.keySet().toArray()[0]).toString();
+            level = map.get("Level").toString();
             term = map.get("Term").toString();
             code = map.get("Code").toString();
             
-            importCreateNode(level, term, code);
+            addTermNode(level, term, code);
             
             // save memory.
             if (counter % 100000 == 0) {
                 m_Tran.success();
                 m_Tran.finish();
-                           
+                
+                m_Tran = null;
                 m_Tran = m_Db.beginTx();
             }
            
@@ -230,12 +351,42 @@ public class Importer {
         m_Report.finishImport("Nodes");
     }
 
+    // TODO: what about level-component type relationships?
+    // creating them for now...
     /*
-     * Imports node, creating  english text and code nodes if needed.
+     * Adds Component node, creating english component text node if needed.
      * 
      * Level is assumed to exist.
      */
-    private void importCreateNode(String level, String term, String code)
+    private void addComponentNode(String level, String componentType, String name)
+    {
+        if (level==null || level.trim().length()==0) {    
+            throw new IllegalArgumentException("level must be provided!");
+        }
+        if (componentType==null || componentType.trim().length()==0) {    
+            throw new IllegalArgumentException("componentType must be provided!");
+        }
+        if (name==null || name.trim().length()==0) {    
+            throw new IllegalArgumentException("name must be provided!");
+        }
+        
+       // get english node or create if it doesn't exist
+       Node englishNode = getEnglishNodeByText(name);
+       if (englishNode == null) {
+           englishNode = createEnglishNode(name);
+       }
+       
+       Node componentLevelNode = getComponentLevelNode(componentType);
+       componentLevelNode.createRelationshipTo(englishNode,DictRelTypes.ComponentEnglish);
+        
+    }
+    
+    /*
+     * Adds Term node, creating english text and code nodes if needed.
+     * 
+     * Level is assumed to exist.
+     */
+    private void addTermNode(String level, String term, String code)
     {
         if (level==null || level.trim().length()==0) {    
             throw new IllegalArgumentException("level must be provided!");
@@ -260,7 +411,7 @@ public class Importer {
        
        Node levelNode = getLevelNode(level);
        levelNode.createRelationshipTo(codeNode,DictRelTypes.LevelCode);
-       codeNode.createRelationshipTo(englishNode,DictRelTypes.English);
+       codeNode.createRelationshipTo(englishNode,DictRelTypes.TermEnglish);
         
     }
     
@@ -334,10 +485,11 @@ public class Importer {
     {
         DictionaryLevel,
         LevelCode,
-        TermCode,
-        English,
+        TermEnglish,
         ChildTerm,
-        TermComponent
+        TermComponent,
+        ComponentEnglish,
+        LevelComponent
     }
     
     
@@ -402,6 +554,10 @@ public class Importer {
         public Data(String header, String delim, int offset) {
             this.offset = offset;
             this.delim = delim;
+            
+            // strip out BOM char
+            header = header.replace("\ufeff","");
+            
             this.fields = header.split(delim);
             data = new Object[(fields.length - offset) * 2];
             for (int i = 0; i < fields.length - offset; i++) {

@@ -25,8 +25,18 @@ public final class Constants {
         public final static String Code = "Code";
         public final static String DictionaryName = "DictionaryName";
         public final static String LevelName = "LevelName";  
-        
+        public final static String ComponentName = "ComponentName";
+             
         public final static String CodeNodeKey="CNKey";
+    }
+    
+    public final class DictionaryLevel {
+        public final static String ATC1 = "ATC1";
+        public final static String ATC2 = "ATC2";
+        public final static String ATC3 = "ATC3";
+        public final static String ATC4 = "ATC4";
+        public final static String Ingredient = "Ingredient";
+        public final static String MP = "MP";
     }
     
     
