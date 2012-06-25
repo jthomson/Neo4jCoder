@@ -35,7 +35,7 @@ public final class Constants {
         public final static String ATC2 = "ATC2";
         public final static String ATC3 = "ATC3";
         public final static String ATC4 = "ATC4";
-        public final static String Ingredient = "Ingredient";
+        public final static String Ingredient = "ING";
         public final static String MP = "MP";
     }
     

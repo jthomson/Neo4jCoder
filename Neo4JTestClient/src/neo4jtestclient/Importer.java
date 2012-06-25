@@ -1,5 +1,10 @@
 package neo4jtestclient;
 
+/**
+ *
+ * @author JThomson
+ */
+
 import org.neo4j.graphdb.RelationshipType;
 import org.neo4j.kernel.impl.batchinsert.*;
 import org.neo4j.graphdb.index.BatchInserterIndexProvider;
@@ -15,6 +20,7 @@ import java.io.IOException;
 import java.io.BufferedReader;
 
 import java.lang.Exception;
+import java.math.BigDecimal;
 import java.util.HashMap;
 
 import org.neo4j.graphdb.Node;
@@ -28,66 +34,66 @@ import static org.neo4j.helpers.collection.MapUtil.map;
 import static org.neo4j.helpers.collection.MapUtil.stringMap;
 import org.neo4j.index.impl.lucene.LuceneIndexImplementation;
 import org.neo4j.kernel.EmbeddedGraphDatabase;
-import sun.misc.GC;
 
 public class Importer {
     private static Importer.Report m_Report;
-    //private BatchInserterImpl m_Db;
     private EmbeddedGraphDatabase m_Db;
-    private Node m_RootNode;
-    private Node m_ATC1Node;
-    private Node m_ATC2Node;
-    private Node m_ATC3Node;
-    private Node m_ATC4Node;
-    private Node m_IngredientNode;
-    private Node m_MPNode; 
+    private Node m_RootNode; 
     private Transaction m_Tran;
     private boolean m_Init;
     private String m_DbLocation;
     
-    private HashMap m_Components;
-    private HashMap m_Levels;
+    //private HashMap m_Components;
+    //private HashMap m_Levels;
     
     private Index<Node> m_EnglishTextIndex;
-    private int m_NumEnglishNodes;
+    private int m_NumAddedEnglishNodes;
     
     private Index<Node> m_CodeIndex;
-    private int m_NumCodeNodes;
+    private int m_NumAddedCodeNodes;
+    
+    private Index<Node> m_LevelIndex;
+    private Index<Node> m_ComponentIndex;
 
     private static String s_Delimiter = ";";
+    private int m_CommitSize = 10000;
     
 
-    public Importer(String dbLocation) {
+    public Importer(String dbLocation, boolean startNew) {
         
         if (dbLocation == null || dbLocation.length() == 0) {
             throw new IllegalArgumentException("dbLocation must be provided!");
         }     
             
         m_DbLocation = dbLocation;
-        
-        File file = new File(m_DbLocation);
-        deleteFileOrDirectory(file);
-        if (!file.exists()) file.mkdirs();
-        
         m_Db = new EmbeddedGraphDatabase(m_DbLocation);
+        registerShutdownHook(m_Db);
         
         m_RootNode = m_Db.getReferenceNode();
         if (m_RootNode == null) m_RootNode = m_Db.createNode();
         
-        m_Report = new Importer.Report(100000, 100);
-        
         m_EnglishTextIndex = m_Db.index().forNodes("EnglishText", LuceneIndexImplementation.FULLTEXT_CONFIG );
-        m_NumEnglishNodes = 0;
+        m_NumAddedEnglishNodes = 0;
         
         m_CodeIndex = m_Db.index().forNodes("Code", EXACT_CONFIG);
-        m_NumCodeNodes = 0;
+        m_NumAddedCodeNodes = 0;
         
-        // used in case multiple imports made to same instance
-        m_Init = true;
+        m_LevelIndex = m_Db.index().forNodes("Level", EXACT_CONFIG);
+        m_ComponentIndex = m_Db.index().forNodes("Component", EXACT_CONFIG);
         
-        m_Components = new HashMap();
-        m_Levels = new HashMap();
+       // m_Components = new HashMap();
+        //m_Levels = new HashMap();
         
+        if (startNew) {
+            File file = new File(m_DbLocation);
+            deleteFileOrDirectory(file);
+            if (!file.exists()) file.mkdirs(); 
+            
+            setupDictionaryBase();
+        }
+         
+        
+        m_Report = new Importer.Report(100000, 100);       
     }
     
     
@@ -97,21 +103,17 @@ public class Importer {
             "cache_type", "none",
             "neostore.propertystore.db.index.keys.mapped_memory", "10M",
             "neostore.propertystore.db.index.mapped_memory", "10M",
-            "neostore.nodestore.db.mapped_memory", "300M",
+            "neostore.nodestore.db.mapped_memory", "400M",
             "neostore.relationshipstore.db.mapped_memory", "150M",
-            "neostore.propertystore.db.mapped_memory", "200M",
-            "neostore.propertystore.db.strings.mapped_memory", "100M");
+            "neostore.propertystore.db.mapped_memory", "400M",
+            "neostore.propertystore.db.strings.mapped_memory", "200M");
     }
 
     public void runImport() throws IOException
     {
         try {      
-            if (m_Init) {
-                 setupDictionaryBase();
-            }
+            
                       
-            //importTermFile("C:\\Users\\jthomson\\Desktop\\FirstVersion.csv");
-            importComponentFile("C:\\Users\\jthomson\\Desktop\\Components.csv");
             
             outputResults();
             
@@ -132,24 +134,30 @@ public class Importer {
         
     }
    
-    private void importComponentFile(String nodeFileLocation) throws IOException
+    public void importComponentFile(String nodeFileLocation) throws IOException
     {   
-        File nodeFile = new File(nodeFileLocation);
-        
-        if (nodeFile == null || nodeFile.length() == 0) {
-            throw new IllegalArgumentException("nodeFile must be provided!");
-        }
-        
-        m_Tran = m_Db.beginTx();
-       
-        importComponentDataNodes(nodeFile);
+        try {   
+            File nodeFile = new File(nodeFileLocation);
 
-        m_Tran.success();
+            if (nodeFile == null || nodeFile.length() == 0) {
+                throw new IllegalArgumentException("nodeFile must be provided!");
+            }
+
+            m_Tran = m_Db.beginTx();
+
+            importComponentDataNodes(nodeFile);
+
+            m_Tran.success();
+            outputResults();
+            
+        } finally {
+            finish();
+        }
 
     }
     
-        private void importComponentDataNodes(File file) throws IOException {
-         
+    private void importComponentDataNodes(File file) throws IOException 
+    {     
         BufferedReader bf = new BufferedReader(new FileReader(file));
         final Importer.Data data = new Importer.Data(bf.readLine(), s_Delimiter, 0);
         String line, level, type, value;
@@ -157,50 +165,53 @@ public class Importer {
         m_Report.reset();
         int counter = 0;
         while ((line = bf.readLine()) != null) {
-            
+
             counter++;
-            
+
             // skip blank lines
             if (line.trim().length() == 0) {
                 continue;
             }
             
-            
             map = map(data.update(line));
-                      
+
             level = map.get("Level").toString();
             type = map.get("Type").toString();
             value = map.get("Value").toString();
-            
+
             addComponentNode(level, type, value);
-            
+
             // save memory.
-            if (counter % 100000 == 0) {
+            if (counter % m_CommitSize == 0) {
                 m_Tran.success();
                 m_Tran.finish();
-                
+
                 m_Tran = null;
                 m_Tran = m_Db.beginTx();
             }
-           
+
             m_Report.dots();
         }
         m_Report.finishImport("Nodes");
     }
     
-    private void importTermFile(String nodeFileLocation) throws IOException
+    public void importTermFile(String nodeFileLocation) throws IOException
     {   
-        File nodeFile = new File(nodeFileLocation);
-        
-        if (nodeFile == null || nodeFile.length() == 0) {
-            throw new IllegalArgumentException("nodeFile must be provided!");
-        }
-        
-        m_Tran = m_Db.beginTx();
-       
-        importTermDataNodes(nodeFile);
+        try
+        {
+            File nodeFile = new File(nodeFileLocation);
 
-        m_Tran.success();
+            if (nodeFile == null || nodeFile.length() == 0) {
+                throw new IllegalArgumentException("nodeFile must be provided!");
+            }
+
+            m_Tran = m_Db.beginTx();
+            importTermDataNodes(nodeFile);
+            m_Tran.success();
+            
+        } finally {
+            finish();
+        }
 
     }
 
@@ -213,8 +224,8 @@ public class Importer {
         long totalNodeCount = m_Db.getConfig().getGraphDbModule().getNodeManager().getNumberOfIdsInUse(Node.class);
               
         System.out.println("~~Results for data load:");
-        System.out.println("English text nodes created: " + m_NumEnglishNodes);
-        System.out.println("Base nodes created: " + m_NumCodeNodes);
+        System.out.println("English text nodes created: " + m_NumAddedEnglishNodes);
+        System.out.println("Base nodes created: " + m_NumAddedCodeNodes);
         System.out.println("Total Node count: " + totalNodeCount);
     }
     
@@ -226,12 +237,12 @@ public class Importer {
         m_RootNode.setProperty(Constants.Node.Type, Constants.Node.Dictionary);
         m_RootNode.setProperty(Constants.Property.DictionaryName, "WhoDrugC");
         
-        m_ATC1Node = addLevelNodeAndRelationship(Constants.DictionaryLevel.ATC1);
-        m_ATC2Node = addLevelNodeAndRelationship(Constants.DictionaryLevel.ATC2);
-        m_ATC3Node = addLevelNodeAndRelationship(Constants.DictionaryLevel.ATC3);
-        m_ATC4Node = addLevelNodeAndRelationship(Constants.DictionaryLevel.ATC4);
-        m_IngredientNode = addLevelNodeAndRelationship(Constants.DictionaryLevel.Ingredient);
-        m_MPNode = addLevelNodeAndRelationship(Constants.DictionaryLevel.MP);
+        addLevelNodeAndRelationship(Constants.DictionaryLevel.ATC1);
+        addLevelNodeAndRelationship(Constants.DictionaryLevel.ATC2);
+        addLevelNodeAndRelationship(Constants.DictionaryLevel.ATC3);
+        addLevelNodeAndRelationship(Constants.DictionaryLevel.ATC4);
+        addLevelNodeAndRelationship(Constants.DictionaryLevel.Ingredient);
+        addLevelNodeAndRelationship(Constants.DictionaryLevel.MP);
         
     }
     
@@ -282,18 +293,23 @@ public class Importer {
         Node levelNode = getLevelNode(level);
         levelNode.createRelationshipTo(componentLevelNode, DictRelTypes.LevelComponent);
         
-        m_Components.put(name, componentLevelNode);
+        m_ComponentIndex.add(componentLevelNode, Constants.Node.BaseComponent, name);
+        //m_Components.put(name, componentLevelNode);
         
     }
     
     private Node getComponentLevelNode(String component) {
     
-        return (Node)m_Components.get(component);
+        return m_ComponentIndex.get(Constants.Node.BaseComponent, component).getSingle();
+        
+        //return (Node)m_Components.get(component);
     }
     
     private Node getLevelNode(String level) {
         
-        return (Node)m_Levels.get(level);
+        return m_LevelIndex.get(Constants.Node.Level, level).getSingle();
+        
+        //return (Node)m_Levels.get(level);
       
     }
     private Node addLevelNodeAndRelationship(String levelName) {
@@ -303,9 +319,26 @@ public class Importer {
         levelNode.setProperty(Constants.Property.LevelName, levelName);
         
         m_RootNode.createRelationshipTo(levelNode, DictRelTypes.DictionaryLevel);
-        m_Levels.put(levelName, levelNode);
+        
+        //m_Levels.put(levelName, levelNode);
+        m_LevelIndex.add(levelNode, Constants.Node.Level, levelName);
         
         return levelNode;
+    }
+    
+    private static void registerShutdownHook(final GraphDatabaseService graphDb)
+    {
+        // Registers a shutdown hook for the Neo4j instance so that it
+        // shuts down nicely when the VM exits (even if you "Ctrl-C" the
+        // running example before it's completed)
+        Runtime.getRuntime().addShutdownHook( new Thread()
+        {
+            @Override
+            public void run()
+            {
+                graphDb.shutdown();
+            }
+        } );
     }
     
     /* 
@@ -326,8 +359,7 @@ public class Importer {
             // skip blank lines
             if (line.trim().length() == 0) {
                 continue;
-            }
-            
+            } 
             
             map = map(data.update(line));
                       
@@ -338,7 +370,7 @@ public class Importer {
             addTermNode(level, term, code);
             
             // save memory.
-            if (counter % 100000 == 0) {
+            if (counter % m_CommitSize == 0) {
                 m_Tran.success();
                 m_Tran.finish();
                 
@@ -373,12 +405,12 @@ public class Importer {
        // get english node or create if it doesn't exist
        Node englishNode = getEnglishNodeByText(name);
        if (englishNode == null) {
-           englishNode = createEnglishNode(name);
+           englishNode = addEnglishNode(name);
        }
        
        Node componentLevelNode = getComponentLevelNode(componentType);
        componentLevelNode.createRelationshipTo(englishNode,DictRelTypes.ComponentEnglish);
-        
+     
     }
     
     /*
@@ -401,33 +433,36 @@ public class Importer {
        // get english and code nodes or create if they don't exist
        Node englishNode = getEnglishNodeByText(term);
        if (englishNode == null) {
-           englishNode = createEnglishNode(term);
+           englishNode = addEnglishNode(term);
        }
        
        Node codeNode = getCodeNodeByCodeAndLevel(code, level);
        if (codeNode == null) {
-           codeNode = createCodeNode(code, level);
+           codeNode = addCodeNode(code, level);
        }
        
        Node levelNode = getLevelNode(level);
+       if (levelNode == null) {
+           int a = 4;
+       }
        levelNode.createRelationshipTo(codeNode,DictRelTypes.LevelCode);
        codeNode.createRelationshipTo(englishNode,DictRelTypes.TermEnglish);
         
     }
     
-    private Node createEnglishNode(String term) {
+    private Node addEnglishNode(String term) {
         
         Node termNode = m_Db.createNode();
         termNode.setProperty(Constants.Node.Type, Constants.Node.English);
         termNode.setProperty(Constants.Property.EnglishText, term);
         
         m_EnglishTextIndex.add(termNode, Constants.Property.EnglishText, term);
-        m_NumEnglishNodes++;
+        m_NumAddedEnglishNodes++;
          
         return termNode;
     }
     
-    private Node createCodeNode(String code, String level) {
+    private Node addCodeNode(String code, String level) {
         
         Node codeNode = m_Db.createNode();
         codeNode.setProperty(Constants.Node.Type, Constants.Node.Base);
@@ -436,7 +471,7 @@ public class Importer {
         
         String key = getCodeNodeKey(code, level);
         m_CodeIndex.add(codeNode, Constants.Property.CodeNodeKey, key);
-        m_NumCodeNodes++;
+        m_NumAddedCodeNodes++;
         
         return codeNode;      
     }
@@ -457,8 +492,18 @@ public class Importer {
    
     private void finish() {
         
-        if (m_Tran != null) m_Tran.finish();        
+        if (m_Tran != null) m_Tran.finish();       
         m_Db.shutdown();
+        
+        deleteTranLogFiles();
+        
+    }
+    
+    private void deleteTranLogFiles() {
+        File file = new File ("D:\\neoDB\\tm_tx_log.1");
+        if (file.exists()) {
+            file.delete();
+        }
     }
         
     public static void deleteFileOrDirectory(final File file)
@@ -498,7 +543,7 @@ public class Importer {
         private final long batch;
         private final long dots;
         private long count;
-        private long total = System.currentTimeMillis(), time, batchTime;
+        private long time, batchTime;
 
         public Report(long batch, int dots) {
             this.batch = batch;
@@ -522,7 +567,7 @@ public class Importer {
         public void finishImport(String type) {
             
             System.out.println("\nImporting " + count + " " + type + " took " + (System.currentTimeMillis() - time) / 1000 + " seconds ");
-            System.out.println("Thousands of total " + type + " created/second: " + count/(double)time);
+            System.out.println("Thousands of total " + type + " created/second: " + count*1000/(double)time);
         }
     }
 
