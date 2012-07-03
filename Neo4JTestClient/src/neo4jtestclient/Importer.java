@@ -5,34 +5,22 @@ package neo4jtestclient;
  * @author JThomson
  */
 
-import org.neo4j.graphdb.RelationshipType;
-import org.neo4j.kernel.impl.batchinsert.*;
-import org.neo4j.graphdb.index.BatchInserterIndexProvider;
-import org.neo4j.graphdb.index.BatchInserterIndex;
-import org.neo4j.index.impl.lucene.LuceneBatchInserterIndexProvider;
-import static org.neo4j.index.impl.lucene.LuceneIndexImplementation.EXACT_CONFIG;
-
-import java.util.Map;
-
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
-import java.io.BufferedReader;
-
-import java.lang.Exception;
-import java.math.BigDecimal;
-import java.util.HashMap;
-
-import org.neo4j.graphdb.Node;
-import org.neo4j.graphdb.index.Index;
-import org.neo4j.graphdb.index.IndexHits;
-import org.neo4j.graphdb.Transaction;
-import org.neo4j.graphdb.index.IndexManager;
-import org.neo4j.helpers.collection.MapUtil;
+import java.util.Map;
+import org.neo4j.cypher.javacompat.ExecutionEngine;
+import org.neo4j.cypher.javacompat.ExecutionResult;
 import org.neo4j.graphdb.GraphDatabaseService;
+import org.neo4j.graphdb.Node;
+import org.neo4j.graphdb.RelationshipType;
+import org.neo4j.graphdb.Transaction;
+import org.neo4j.graphdb.index.Index;
 import static org.neo4j.helpers.collection.MapUtil.map;
 import static org.neo4j.helpers.collection.MapUtil.stringMap;
 import org.neo4j.index.impl.lucene.LuceneIndexImplementation;
+import static org.neo4j.index.impl.lucene.LuceneIndexImplementation.EXACT_CONFIG;
 import org.neo4j.kernel.EmbeddedGraphDatabase;
 
 public class Importer {
@@ -53,7 +41,7 @@ public class Importer {
     private int m_NumAddedCodeNodes;
     
     private Index<Node> m_LevelIndex;
-    private Index<Node> m_ComponentIndex;
+    private Index<Node> m_ComponentLevelIndex;
 
     private static String s_Delimiter = ";";
     private int m_CommitSize = 10000;
@@ -79,7 +67,7 @@ public class Importer {
         m_NumAddedCodeNodes = 0;
         
         m_LevelIndex = m_Db.index().forNodes("Level", EXACT_CONFIG);
-        m_ComponentIndex = m_Db.index().forNodes("Component", EXACT_CONFIG);
+        m_ComponentLevelIndex = m_Db.index().forNodes("ComponentLevel", EXACT_CONFIG);
         
        // m_Components = new HashMap();
         //m_Levels = new HashMap();
@@ -181,7 +169,7 @@ public class Importer {
 
             addComponentNode(level, type, value);
 
-            // save memory.
+            // commit regularly.
             if (counter % m_CommitSize == 0) {
                 m_Tran.success();
                 m_Tran.finish();
@@ -215,18 +203,53 @@ public class Importer {
 
     }
 
-    private void createRandomTermComponentRelationshipByLevel(String level) {
+    public void runCypherTests() {
         
+        testCypherParamSearch();           
+    }
+            
+    private void testCypherStringSearch(String query) {
+        
+        ExecutionEngine engine = new ExecutionEngine( m_Db );
+        ExecutionResult result = engine.execute(query);   
+        System.out.println("Query: " + query);
+        System.out.println(result);
     }
     
-    public void outputResults() {
+    private void testCypherParamSearch() {
+         
+        String rootNode="start n=node(0) return n";
+        testCypherStringSearch(rootNode);
         
-        long totalNodeCount = m_Db.getConfig().getGraphDbModule().getNodeManager().getNumberOfIdsInUse(Node.class);
-              
+        String test1 = "start n=node(0) return n, n." + Constants.Property.DictionaryName;
+        testCypherStringSearch(test1);
+        
+        String rootNodeChildren="start root=node(0) match root -[:DictionaryLevel]->level return level";       
+        testCypherStringSearch(rootNodeChildren);
+        
+        String rootNodeChildrenWithOrdering="start root=node(0) match root -[:DictionaryLevel]->levelordered return levelordered order by levelordered.LevelName asc";
+        testCypherStringSearch(rootNodeChildrenWithOrdering);
+
+        String drugRecordNumberComponentLevel = "start components=node:ComponentLevel(" + Constants.Node.BaseComponent + "='DRUGRECORDNUMBER') return components";
+        testCypherStringSearch(drugRecordNumberComponentLevel);
+
+        String drugRecordNumberComponents = "start components=node:ComponentLevel(" + Constants.Node.BaseComponent + "='DRUGRECORDNUMBER') match components-[:ComponentEnglish]->englishnodes return englishnodes";;
+        testCypherStringSearch(drugRecordNumberComponents);
+        
+        
+    }
+   /* 
+    private void importTermComponentRelationships() {
+        
+        
+    }  
+    */
+    
+    public void outputResults() {
+               
         System.out.println("~~Results for data load:");
         System.out.println("English text nodes created: " + m_NumAddedEnglishNodes);
         System.out.println("Base nodes created: " + m_NumAddedCodeNodes);
-        System.out.println("Total Node count: " + totalNodeCount);
     }
     
     /*
@@ -293,25 +316,19 @@ public class Importer {
         Node levelNode = getLevelNode(level);
         levelNode.createRelationshipTo(componentLevelNode, DictRelTypes.LevelComponent);
         
-        m_ComponentIndex.add(componentLevelNode, Constants.Node.BaseComponent, name);
-        //m_Components.put(name, componentLevelNode);
-        
+        m_ComponentLevelIndex.add(componentLevelNode, Constants.Node.BaseComponent, name);       
     }
     
     private Node getComponentLevelNode(String component) {
     
-        return m_ComponentIndex.get(Constants.Node.BaseComponent, component).getSingle();
-        
-        //return (Node)m_Components.get(component);
+        return m_ComponentLevelIndex.get(Constants.Node.BaseComponent, component).getSingle();
     }
     
     private Node getLevelNode(String level) {
         
-        return m_LevelIndex.get(Constants.Node.Level, level).getSingle();
-        
-        //return (Node)m_Levels.get(level);
-      
+        return m_LevelIndex.get(Constants.Node.Level, level).getSingle();     
     }
+    
     private Node addLevelNodeAndRelationship(String levelName) {
         
         Node levelNode = m_Db.createNode();
@@ -319,8 +336,6 @@ public class Importer {
         levelNode.setProperty(Constants.Property.LevelName, levelName);
         
         m_RootNode.createRelationshipTo(levelNode, DictRelTypes.DictionaryLevel);
-        
-        //m_Levels.put(levelName, levelNode);
         m_LevelIndex.add(levelNode, Constants.Node.Level, levelName);
         
         return levelNode;
@@ -369,7 +384,7 @@ public class Importer {
             
             addTermNode(level, term, code);
             
-            // save memory.
+            // commit regularly.
             if (counter % m_CommitSize == 0) {
                 m_Tran.success();
                 m_Tran.finish();
@@ -383,8 +398,6 @@ public class Importer {
         m_Report.finishImport("Nodes");
     }
 
-    // TODO: what about level-component type relationships?
-    // creating them for now...
     /*
      * Adds Component node, creating english component text node if needed.
      * 
@@ -492,8 +505,11 @@ public class Importer {
    
     private void finish() {
         
-        if (m_Tran != null) m_Tran.finish();       
+        if (m_Tran != null) m_Tran.finish(); 
+        m_Tran=null;
+        
         m_Db.shutdown();
+        m_Db = null;
         
         deleteTranLogFiles();
         
@@ -600,7 +616,7 @@ public class Importer {
             this.offset = offset;
             this.delim = delim;
             
-            // strip out BOM char
+            // strip out BOM char.
             header = header.replace("\ufeff","");
             
             this.fields = header.split(delim);

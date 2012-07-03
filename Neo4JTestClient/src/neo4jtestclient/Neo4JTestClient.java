@@ -15,11 +15,15 @@ public class Neo4JTestClient {
      */
     public static void main(String[] args) throws IOException {
         
+        /*
         Importer importer = new Importer("/neoDB", true);
         importer.importComponentFile("C:\\Users\\jthomson\\Desktop\\Components.csv");
         
         Importer termImporter = new Importer("/neoDB", false);
         termImporter.importTermFile("C:\\Users\\jthomson\\Desktop\\FirstVersion.csv"); 
-               
+        */
+        
+        Importer testy = new Importer("/neoDB", false);
+        testy.runCypherTests();
     }   
 }

@@ -16,7 +16,7 @@ public final class Constants {
         public final static String Dictionary = "DictionaryN";
         public final static String Level = "LevelN"; 
         public final static String BaseComponent = "BaseCN";
-        public final static String Base = "Base";
+        public final static String Base = "BaseN";
         public final static String English = "EnglishN";
     }
     
@@ -38,6 +38,5 @@ public final class Constants {
         public final static String Ingredient = "ING";
         public final static String MP = "MP";
     }
-    
     
 }
