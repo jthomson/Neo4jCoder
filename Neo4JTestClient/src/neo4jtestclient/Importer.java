@@ -12,11 +12,10 @@ import java.io.IOException;
 import java.util.Map;
 import org.neo4j.cypher.javacompat.ExecutionEngine;
 import org.neo4j.cypher.javacompat.ExecutionResult;
-import org.neo4j.graphdb.GraphDatabaseService;
-import org.neo4j.graphdb.Node;
-import org.neo4j.graphdb.RelationshipType;
-import org.neo4j.graphdb.Transaction;
+import org.neo4j.graphdb.*;
+import org.neo4j.graphdb.Traverser.Order;
 import org.neo4j.graphdb.index.Index;
+import org.neo4j.graphdb.index.IndexHits;
 import static org.neo4j.helpers.collection.MapUtil.map;
 import static org.neo4j.helpers.collection.MapUtil.stringMap;
 import org.neo4j.index.impl.lucene.LuceneIndexImplementation;
@@ -31,17 +30,15 @@ public class Importer {
     private boolean m_Init;
     private String m_DbLocation;
     
-    //private HashMap m_Components;
-    //private HashMap m_Levels;
-    
     private Index<Node> m_EnglishTextIndex;
     private int m_NumAddedEnglishNodes;
     
     private Index<Node> m_CodeIndex;
     private int m_NumAddedCodeNodes;
     
+    private int m_NumAddedTermComponentRelationships;
+    
     private Index<Node> m_LevelIndex;
-    private Index<Node> m_ComponentLevelIndex;
 
     private static String s_Delimiter = ";";
     private int m_CommitSize = 10000;
@@ -66,8 +63,10 @@ public class Importer {
         m_CodeIndex = m_Db.index().forNodes("Code", EXACT_CONFIG);
         m_NumAddedCodeNodes = 0;
         
+        m_NumAddedTermComponentRelationships = 0;
+        
         m_LevelIndex = m_Db.index().forNodes("Level", EXACT_CONFIG);
-        m_ComponentLevelIndex = m_Db.index().forNodes("ComponentLevel", EXACT_CONFIG);
+//        m_ComponentLevelIndex = m_Db.index().forNodes("ComponentLevel", EXACT_CONFIG);
         
        // m_Components = new HashMap();
         //m_Levels = new HashMap();
@@ -96,44 +95,43 @@ public class Importer {
             "neostore.propertystore.db.mapped_memory", "400M",
             "neostore.propertystore.db.strings.mapped_memory", "200M");
     }
-
-    public void runImport() throws IOException
-    {
-        try {      
-            
-                      
-            
-            outputResults();
-            
-        } finally {
-            finish();
-        }
-     
-    }
     
     private void setupDictionaryBase() {
         
         m_Tran = m_Db.beginTx();
         createDictionaryAndLevels();
-        createComponentLevelNodes();
+
         m_Tran.success();
         m_Tran.finish();
         m_Init = false;
         
     }
    
-    public void importComponentFile(String nodeFileLocation) throws IOException
-    {   
+    public void importFile(FileType type, String fileLocation) throws IOException {
+  
         try {   
-            File nodeFile = new File(nodeFileLocation);
+            File file = new File(fileLocation);
 
-            if (nodeFile == null || nodeFile.length() == 0) {
-                throw new IllegalArgumentException("nodeFile must be provided!");
+            if (file == null || file.length() == 0) {
+                throw new IllegalArgumentException("fileLocation must be provided!");
             }
 
             m_Tran = m_Db.beginTx();
 
-            importComponentDataNodes(nodeFile);
+            switch (type)
+            {
+                case Terms:
+                    importTermDataNodes(file);
+                    break;
+              
+                case Components:
+                    importComponentDataNodes(file);
+                    break;
+             
+                case TermComponents:
+                    importTermComponentRelationships(file);
+                    break;
+            }
 
             m_Tran.success();
             outputResults();
@@ -141,74 +139,139 @@ public class Importer {
         } finally {
             finish();
         }
+    }
+    
+    private void importTermComponentRelationships(File file) throws IOException {
 
+        BufferedReader bf = new BufferedReader(new FileReader(file));
+        try 
+        {
+            final Importer.Data data = new Importer.Data(bf.readLine(), s_Delimiter, 0);
+            String line, component, term, componentType;
+            Map<String,Object> map;
+            m_Report.reset();
+            int counter = 0;
+            while ((line = bf.readLine()) != null) {
+
+                counter++;
+
+                // skip blank lines
+                if (line.trim().length() == 0) {
+                    continue;
+                }
+
+                map = map(data.update(line));
+
+                component = map.get("Component").toString();
+                componentType = map.get("ComponentType").toString();
+                term = map.get("Code").toString();
+
+                addTermComponentRelationship(componentType, component, term);
+
+                ensureRegularCommit(counter);
+
+                m_Report.dots();
+            }
+        }
+        finally
+        {
+            if (bf != null) bf.close();
+        }
+        m_Report.finishImport("TermComponentRelationships");   
+    }
+    
+    private void addTermComponentRelationship(String componentType, String component, String term) {
+        
+        Node componentNode = getEnglishNodeByText(term)
+        
+        Node termNode = getEnglishNodeByText(term);
+        
+        if (termNode == null) {
+            String a = "b";
+        }
+        
+        
     }
     
     private void importComponentDataNodes(File file) throws IOException 
     {     
         BufferedReader bf = new BufferedReader(new FileReader(file));
-        final Importer.Data data = new Importer.Data(bf.readLine(), s_Delimiter, 0);
-        String line, level, type, value;
-        Map<String,Object> map;
-        m_Report.reset();
-        int counter = 0;
-        while ((line = bf.readLine()) != null) {
+        try 
+        {
+            final Importer.Data data = new Importer.Data(bf.readLine(), s_Delimiter, 0);
+            String line, level, type, value;
+            Map<String,Object> map;
+            m_Report.reset();
+            int counter = 0;
+            while ((line = bf.readLine()) != null) {
 
-            counter++;
+                counter++;
 
-            // skip blank lines
-            if (line.trim().length() == 0) {
-                continue;
+                // skip blank lines
+                if (line.trim().length() == 0) {
+                    continue;
+                }
+
+                map = map(data.update(line));
+
+                level = map.get("Level").toString();
+                type = map.get("Type").toString();
+                value = map.get("Value").toString();
+
+                addComponentNode(level, type, value);
+
+                ensureRegularCommit(counter);
+
+                m_Report.dots();
             }
-            
-            map = map(data.update(line));
-
-            level = map.get("Level").toString();
-            type = map.get("Type").toString();
-            value = map.get("Value").toString();
-
-            addComponentNode(level, type, value);
-
-            // commit regularly.
-            if (counter % m_CommitSize == 0) {
-                m_Tran.success();
-                m_Tran.finish();
-
-                m_Tran = null;
-                m_Tran = m_Db.beginTx();
-            }
-
-            m_Report.dots();
         }
-        m_Report.finishImport("Nodes");
+        finally {
+            if (bf != null) bf.close();
+        }
+        m_Report.finishImport("ComponentNodes");
     }
     
-    public void importTermFile(String nodeFileLocation) throws IOException
-    {   
-        try
-        {
-            File nodeFile = new File(nodeFileLocation);
+    private void ensureRegularCommit(int counter) {
 
-            if (nodeFile == null || nodeFile.length() == 0) {
-                throw new IllegalArgumentException("nodeFile must be provided!");
-            }
-
-            m_Tran = m_Db.beginTx();
-            importTermDataNodes(nodeFile);
+        if (counter % m_CommitSize == 0) {
             m_Tran.success();
-            
-        } finally {
-            finish();
-        }
+            m_Tran.finish();
 
+            m_Tran = null;
+            m_Tran = m_Db.beginTx();
+        }
     }
 
     public void runCypherTests() {
         
-        testCypherParamSearch();           
+        testCypherSearch();           
+    }
+    
+    public void runLuceneTests() {
+        
+        String antiHyperTensives = "start terms=node:EnglishText(" + Constants.Property.EnglishText + "='ANTIHYPERTENSIVES') return terms";
+        stringSearch(antiHyperTensives);
+
+        englishTermLuceneSearch("ANTIHYPERTENSIVES");
+        
+        String twoWildcard = "start terms=node:EnglishText(\"EnglishText:A* AND EnglishText:D*\") return terms";
+        stringSearch(twoWildcard);
+        
+        //String termsAtLevel = "start terms=node:EnglishText(\"EnglishText:A*\") match terms-[:ComponentEnglish]-a where a.ComponentName='DRUGRECORDNUMBER' return a";
+        //stringSearch(termsAtLevel);   
+        
+        String allTerms = "start terms=node:EnglishText(\"EnglishText:*\") return terms";
+        stringSearch(allTerms);
+        
+    }
+    
+    private void englishTermLuceneSearch(String queryString) {
+        
+        String searchString = "start terms=node:EnglishText(\"" + Constants.Property.EnglishText + ":" + queryString + "\") return terms";
+        stringSearch(searchString);     
     }
             
-    private void testCypherStringSearch(String query) {
+    private void stringSearch(String query) {
         
         ExecutionEngine engine = new ExecutionEngine( m_Db );
         ExecutionResult result = engine.execute(query);   
@@ -216,34 +279,28 @@ public class Importer {
         System.out.println(result);
     }
     
-    private void testCypherParamSearch() {
+    private void testCypherSearch() {
          
         String rootNode="start n=node(0) return n";
-        testCypherStringSearch(rootNode);
+        stringSearch(rootNode);
         
         String test1 = "start n=node(0) return n, n." + Constants.Property.DictionaryName;
-        testCypherStringSearch(test1);
+        stringSearch(test1);
         
         String rootNodeChildren="start root=node(0) match root -[:DictionaryLevel]->level return level";       
-        testCypherStringSearch(rootNodeChildren);
+        stringSearch(rootNodeChildren);
         
         String rootNodeChildrenWithOrdering="start root=node(0) match root -[:DictionaryLevel]->levelordered return levelordered order by levelordered.LevelName asc";
-        testCypherStringSearch(rootNodeChildrenWithOrdering);
+        stringSearch(rootNodeChildrenWithOrdering);
 
         String drugRecordNumberComponentLevel = "start components=node:ComponentLevel(" + Constants.Node.BaseComponent + "='DRUGRECORDNUMBER') return components";
-        testCypherStringSearch(drugRecordNumberComponentLevel);
+        stringSearch(drugRecordNumberComponentLevel);
 
-        String drugRecordNumberComponents = "start components=node:ComponentLevel(" + Constants.Node.BaseComponent + "='DRUGRECORDNUMBER') match components-[:ComponentEnglish]->englishnodes return englishnodes";;
-        testCypherStringSearch(drugRecordNumberComponents);
+        String drugRecordNumberComponents = "start components=node:ComponentLevel(" + Constants.Node.BaseComponent + "='DRUGRECORDNUMBER') match components-[:ComponentEnglish]->englishnodes return englishnodes";
+        stringSearch(drugRecordNumberComponents);
         
         
     }
-   /* 
-    private void importTermComponentRelationships() {
-        
-        
-    }  
-    */
     
     public void outputResults() {
                
@@ -268,62 +325,63 @@ public class Importer {
         addLevelNodeAndRelationship(Constants.DictionaryLevel.MP);
         
     }
-    
-    private void createComponentLevelNodes() {
+   
+/*
+    private void createComponentTypeNodes() {
         
-        addComponentLevelNode("DRUGRECORDNUMBER", Constants.DictionaryLevel.Ingredient);
-        addComponentLevelNode("SEQUENCENUMBER1", Constants.DictionaryLevel.Ingredient);
-        addComponentLevelNode("SEQUENCENUMBER2", Constants.DictionaryLevel.Ingredient);
-        addComponentLevelNode("SEQUENCENUMBER3", Constants.DictionaryLevel.Ingredient);
-        addComponentLevelNode("SEQUENCENUMBER4", Constants.DictionaryLevel.Ingredient);
-        addComponentLevelNode("GENERIC", Constants.DictionaryLevel.Ingredient);
-        addComponentLevelNode("NAMESPECIFIER", Constants.DictionaryLevel.Ingredient);
-        addComponentLevelNode("MARKETINGAUTHORIZATIONNUMBER", Constants.DictionaryLevel.Ingredient);
-        addComponentLevelNode("MARKETINGAUTHORIZATIONDATE", Constants.DictionaryLevel.Ingredient);
-        addComponentLevelNode("MARKETINGAUTHORIZATIONWITHDRAWALDATE", Constants.DictionaryLevel.Ingredient);
-        addComponentLevelNode("COUNTRY", Constants.DictionaryLevel.Ingredient);
-        addComponentLevelNode("COMPANY", Constants.DictionaryLevel.Ingredient);
-        addComponentLevelNode("COMPANYCOUNTRY", Constants.DictionaryLevel.Ingredient);
-        addComponentLevelNode("MARKETINGAUTHORIZATIONHOLDER", Constants.DictionaryLevel.Ingredient);
-        addComponentLevelNode("MARKETINGAUTHORIZATIONHOLDERCOUNTRY", Constants.DictionaryLevel.Ingredient);
-        addComponentLevelNode("SOURCEYEAR", Constants.DictionaryLevel.Ingredient);
-        addComponentLevelNode("SOURCE", Constants.DictionaryLevel.Ingredient);
-        addComponentLevelNode("SOURCECOUNTRY", Constants.DictionaryLevel.Ingredient);
-        addComponentLevelNode("PRODUCTTYPE", Constants.DictionaryLevel.Ingredient);
-        addComponentLevelNode("PRODUCTGROUP", Constants.DictionaryLevel.Ingredient);
-        addComponentLevelNode("PRODUCTGROUPDATERECORDED", Constants.DictionaryLevel.Ingredient);
-        addComponentLevelNode("CREATEDATE", Constants.DictionaryLevel.Ingredient);
-        addComponentLevelNode("DATECHANGED", Constants.DictionaryLevel.Ingredient);
-        addComponentLevelNode("INGREDIENTCREATEDATE", Constants.DictionaryLevel.MP);
-        addComponentLevelNode("QUANTITY", Constants.DictionaryLevel.MP);
-        addComponentLevelNode("QUANTITY2", Constants.DictionaryLevel.MP);
-        addComponentLevelNode("UNIT", Constants.DictionaryLevel.MP);
-        addComponentLevelNode("PHARMACEUTICALFORM", Constants.DictionaryLevel.MP);
-        addComponentLevelNode("ROUTEOFADMINISTRATION", Constants.DictionaryLevel.MP);
-        addComponentLevelNode("NUMBEROFINGREDIENTS", Constants.DictionaryLevel.MP);
-        addComponentLevelNode("PHARMACEUTICALFORMCREATEDATE", Constants.DictionaryLevel.MP);
-        addComponentLevelNode("SUBSTANCE", Constants.DictionaryLevel.MP);
-        addComponentLevelNode("CASNUMBER", Constants.DictionaryLevel.MP);
-        addComponentLevelNode("LANGUAGECODE", Constants.DictionaryLevel.MP);
+        addComponentTypeNode("DRUGRECORDNUMBER", Constants.DictionaryLevel.Ingredient);
+        addComponentTypeNode("SEQUENCENUMBER1", Constants.DictionaryLevel.Ingredient);
+        addComponentTypeNode("SEQUENCENUMBER2", Constants.DictionaryLevel.Ingredient);
+        addComponentTypeNode("SEQUENCENUMBER3", Constants.DictionaryLevel.Ingredient);
+        addComponentTypeNode("SEQUENCENUMBER4", Constants.DictionaryLevel.Ingredient);
+        addComponentTypeNode("GENERIC", Constants.DictionaryLevel.Ingredient);
+        addComponentTypeNode("NAMESPECIFIER", Constants.DictionaryLevel.Ingredient);
+        addComponentTypeNode("MARKETINGAUTHORIZATIONNUMBER", Constants.DictionaryLevel.Ingredient);
+        addComponentTypeNode("MARKETINGAUTHORIZATIONDATE", Constants.DictionaryLevel.Ingredient);
+        addComponentTypeNode("MARKETINGAUTHORIZATIONWITHDRAWALDATE", Constants.DictionaryLevel.Ingredient);
+        addComponentTypeNode("COUNTRY", Constants.DictionaryLevel.Ingredient);
+        addComponentTypeNode("COMPANY", Constants.DictionaryLevel.Ingredient);
+        addComponentTypeNode("COMPANYCOUNTRY", Constants.DictionaryLevel.Ingredient);
+        addComponentTypeNode("MARKETINGAUTHORIZATIONHOLDER", Constants.DictionaryLevel.Ingredient);
+        addComponentTypeNode("MARKETINGAUTHORIZATIONHOLDERCOUNTRY", Constants.DictionaryLevel.Ingredient);
+        addComponentTypeNode("SOURCEYEAR", Constants.DictionaryLevel.Ingredient);
+        addComponentTypeNode("SOURCE", Constants.DictionaryLevel.Ingredient);
+        addComponentTypeNode("SOURCECOUNTRY", Constants.DictionaryLevel.Ingredient);
+        addComponentTypeNode("PRODUCTTYPE", Constants.DictionaryLevel.Ingredient);
+        addComponentTypeNode("PRODUCTGROUP", Constants.DictionaryLevel.Ingredient);
+        addComponentTypeNode("PRODUCTGROUPDATERECORDED", Constants.DictionaryLevel.Ingredient);
+        addComponentTypeNode("CREATEDATE", Constants.DictionaryLevel.Ingredient);
+        addComponentTypeNode("DATECHANGED", Constants.DictionaryLevel.Ingredient);
+        addComponentTypeNode("INGREDIENTCREATEDATE", Constants.DictionaryLevel.MP);
+        addComponentTypeNode("QUANTITY", Constants.DictionaryLevel.MP);
+        addComponentTypeNode("QUANTITY2", Constants.DictionaryLevel.MP);
+        addComponentTypeNode("UNIT", Constants.DictionaryLevel.MP);
+        addComponentTypeNode("PHARMACEUTICALFORM", Constants.DictionaryLevel.MP);
+        addComponentTypeNode("ROUTEOFADMINISTRATION", Constants.DictionaryLevel.MP);
+        addComponentTypeNode("NUMBEROFINGREDIENTS", Constants.DictionaryLevel.MP);
+        addComponentTypeNode("PHARMACEUTICALFORMCREATEDATE", Constants.DictionaryLevel.MP);
+        addComponentTypeNode("SUBSTANCE", Constants.DictionaryLevel.MP);
+        addComponentTypeNode("CASNUMBER", Constants.DictionaryLevel.MP);
+        addComponentTypeNode("LANGUAGECODE", Constants.DictionaryLevel.MP);
     }
     
-    private void addComponentLevelNode(String name, String level) {
+    private void addComponentTypeNode(String name, String level) {
         
-        Node componentLevelNode = m_Db.createNode();
-        componentLevelNode.setProperty(Constants.Node.Type, Constants.Node.BaseComponent);
-        componentLevelNode.setProperty(Constants.Property.ComponentName, name);
+        Node componentTypeNode = m_Db.createNode();
+        componentTypeNode.setProperty(Constants.Node.Type, Constants.Node.BaseComponent);
+        componentTypeNode.setProperty(Constants.Property.ComponentName, name);
         
         Node levelNode = getLevelNode(level);
-        levelNode.createRelationshipTo(componentLevelNode, DictRelTypes.LevelComponent);
+        levelNode.createRelationshipTo(componentTypeNode, DictRelType.LevelComponent);
         
-        m_ComponentLevelIndex.add(componentLevelNode, Constants.Node.BaseComponent, name);       
+        m_ComponentLevelIndex.add(componentTypeNode, Constants.Node.BaseComponent, name);       
     }
-    
+  
     private Node getComponentLevelNode(String component) {
     
         return m_ComponentLevelIndex.get(Constants.Node.BaseComponent, component).getSingle();
     }
-    
+*/    
     private Node getLevelNode(String level) {
         
         return m_LevelIndex.get(Constants.Node.Level, level).getSingle();     
@@ -335,7 +393,7 @@ public class Importer {
         levelNode.setProperty(Constants.Node.Type, Constants.Node.Level);
         levelNode.setProperty(Constants.Property.LevelName, levelName);
         
-        m_RootNode.createRelationshipTo(levelNode, DictRelTypes.DictionaryLevel);
+        m_RootNode.createRelationshipTo(levelNode, DictRelType.DictionaryLevel);
         m_LevelIndex.add(levelNode, Constants.Node.Level, levelName);
         
         return levelNode;
@@ -362,40 +420,39 @@ public class Importer {
     private void importTermDataNodes(File file) throws IOException {
          
         BufferedReader bf = new BufferedReader(new FileReader(file));
-        final Importer.Data data = new Importer.Data(bf.readLine(), s_Delimiter, 0);
-        String line, level, term, code;
-        Map<String,Object> map;
-        m_Report.reset();
-        int counter = 0;
-        while ((line = bf.readLine()) != null) {
-            
-            counter++;
-            
-            // skip blank lines
-            if (line.trim().length() == 0) {
-                continue;
-            } 
-            
-            map = map(data.update(line));
-                      
-            level = map.get("Level").toString();
-            term = map.get("Term").toString();
-            code = map.get("Code").toString();
-            
-            addTermNode(level, term, code);
-            
-            // commit regularly.
-            if (counter % m_CommitSize == 0) {
-                m_Tran.success();
-                m_Tran.finish();
-                
-                m_Tran = null;
-                m_Tran = m_Db.beginTx();
+        try 
+        {
+            final Importer.Data data = new Importer.Data(bf.readLine(), s_Delimiter, 0);
+            String line, level, term, code;
+            Map<String,Object> map;
+            m_Report.reset();
+            int counter = 0;
+            while ((line = bf.readLine()) != null) {
+
+                counter++;
+
+                // skip blank lines
+                if (line.trim().length() == 0) {
+                    continue;
+                } 
+
+                map = map(data.update(line));
+
+                level = map.get("Level").toString();
+                term = map.get("Term").toString();
+                code = map.get("Code").toString();
+
+                addTermNode(level, term, code);
+
+                ensureRegularCommit(counter);
+
+                m_Report.dots();
             }
-           
-            m_Report.dots();
         }
-        m_Report.finishImport("Nodes");
+        finally {
+            if (bf!=null) bf.close();
+        }
+        m_Report.finishImport("TermNodes");
     }
 
     /*
@@ -420,10 +477,11 @@ public class Importer {
        if (englishNode == null) {
            englishNode = addEnglishNode(name);
        }
-       
+ 
+/*       
        Node componentLevelNode = getComponentLevelNode(componentType);
-       componentLevelNode.createRelationshipTo(englishNode,DictRelTypes.ComponentEnglish);
-     
+       componentLevelNode.createRelationshipTo(englishNode,DictRelType.ComponentEnglish);
+*/     
     }
     
     /*
@@ -451,46 +509,40 @@ public class Importer {
        
        Node codeNode = getCodeNodeByCodeAndLevel(code, level);
        if (codeNode == null) {
-           codeNode = addCodeNode(code, level);
+           codeNode = addCodeNode(code);
        }
        
        Node levelNode = getLevelNode(level);
        if (levelNode == null) {
            int a = 4;
        }
-       levelNode.createRelationshipTo(codeNode,DictRelTypes.LevelCode);
-       codeNode.createRelationshipTo(englishNode,DictRelTypes.TermEnglish);
+       levelNode.createRelationshipTo(codeNode,DictRelType.LevelCode);
+       codeNode.createRelationshipTo(englishNode,DictRelType.TermEnglish);
         
     }
     
-    private Node addEnglishNode(String term) {
+    private Node addEnglishNode(String value) {
         
-        Node termNode = m_Db.createNode();
-        termNode.setProperty(Constants.Node.Type, Constants.Node.English);
-        termNode.setProperty(Constants.Property.EnglishText, term);
+        Node node = m_Db.createNode();
+        node.setProperty(Constants.Node.Type, Constants.Node.English);
+        node.setProperty(Constants.Property.EnglishText, value);
         
-        m_EnglishTextIndex.add(termNode, Constants.Property.EnglishText, term);
+        m_EnglishTextIndex.add(node, Constants.Property.EnglishText, value);
         m_NumAddedEnglishNodes++;
          
-        return termNode;
+        return node;
     }
     
-    private Node addCodeNode(String code, String level) {
+    private Node addCodeNode(String code) {
         
         Node codeNode = m_Db.createNode();
         codeNode.setProperty(Constants.Node.Type, Constants.Node.Base);
         codeNode.setProperty(Constants.Property.Code, code);
-        codeNode.setProperty(Constants.Property.LevelName, level);
         
-        String key = getCodeNodeKey(code, level);
-        m_CodeIndex.add(codeNode, Constants.Property.CodeNodeKey, key);
+        m_CodeIndex.add(codeNode, Constants.Property.CodeNodeKey, code);
         m_NumAddedCodeNodes++;
         
         return codeNode;      
-    }
-    
-    private String getCodeNodeKey(String code, String level) {
-        return String.format("%s%s%s", code, s_Delimiter, level);
     }
     
     private Node getEnglishNodeByText(String text) {
@@ -500,7 +552,47 @@ public class Importer {
     
     private Node getCodeNodeByCodeAndLevel(String code, String level) {
         
-        return m_CodeIndex.get(Constants.Property.CodeNodeKey, getCodeNodeKey(code, level)).getSingle(); 
+        
+        IndexHits<Node> hits = m_CodeIndex.get(Constants.Property.CodeNodeKey, code);
+        try
+        {
+            for ( Node node : hits )
+            {
+                if (doesNodeHaveLevelRelationship(node, level)) return node;
+            }
+            
+            return null;
+        }
+        finally
+        {
+            hits.close();
+        }
+    
+    }
+    
+    private boolean doesNodeHaveLevelRelationship(Node node, String level) {
+        
+        Traverser traverser = node.traverse(Order.BREADTH_FIRST,
+                StopEvaluator.END_OF_GRAPH,
+                new ReturnableEvaluator()
+                {
+                    @Override
+                    public boolean isReturnableNode(
+                            final TraversalPosition currentPos )
+                    {
+                        return !currentPos.isStartNode()
+                        && currentPos.lastRelationshipTraversed()
+                        .isType(DictRelType.LevelCode);
+                    }
+                },
+                DictRelType.LevelCode,
+                Direction.OUTGOING );
+            for ( Node travNode : traverser )
+            {
+                if (travNode.getProperty(Constants.Property.LevelName) == level)
+                    return true;
+            }
+        return false;
     }
    
     private void finish() {
@@ -511,8 +603,7 @@ public class Importer {
         m_Db.shutdown();
         m_Db = null;
         
-        deleteTranLogFiles();
-        
+        deleteTranLogFiles();      
     }
     
     private void deleteTranLogFiles() {
@@ -542,18 +633,6 @@ public class Importer {
         }
     }
       
-    enum DictRelTypes implements RelationshipType
-    {
-        DictionaryLevel,
-        LevelCode,
-        TermEnglish,
-        ChildTerm,
-        TermComponent,
-        ComponentEnglish,
-        LevelComponent
-    }
-    
-    
     // report class from batch implemntor used for import time reporting
     static class Report {
         private final long batch;

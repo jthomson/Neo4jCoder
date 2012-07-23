@@ -4,6 +4,8 @@
  */
 package neo4jtestclient;
 
+import org.neo4j.graphdb.RelationshipType;
+
 /**
  *
  * @author JThomson
@@ -40,3 +42,57 @@ public final class Constants {
     }
     
 }
+
+    enum DictRelType implements RelationshipType
+    {
+        DictionaryLevel,
+        LevelCode,
+        TermEnglish,
+        ChildTerm,
+        TermComponent,
+        ComponentEnglish,
+        LevelComponent,
+        
+        // ComponentRelationshipTypes
+        DRUGRECORDNUMBER,
+        SEQUENCENUMBER1,
+        SEQUENCENUMBER2,
+        SEQUENCENUMBER3,
+        SEQUENCENUMBER4,
+        GENERIC,
+        NAMESPECIFIER,
+        MARKETINGAUTHORIZATIONNUMBER,
+        MARKETINGAUTHORIZATIONDATE,
+        MARKETINGAUTHORIZATIONWITHDRAWALDATE,
+        COUNTRY,
+        COMPANY,
+        COMPANYCOUNTRY,
+        MARKETINGAUTHORIZATIONHOLDER,
+        MARKETINGAUTHORIZATIONHOLDERCOUNTRY,
+        SOURCEYEAR,
+        SOURCE,
+        SOURCECOUNTRY,
+        PRODUCTTYPE,
+        PRODUCTGROUP,
+        PRODUCTGROUPDATERECORDED,
+        CREATEDATE,
+        DATECHANGED,
+        INGREDIENTCREATEDATE,
+        QUANTITY,
+        QUANTITY2,
+        UNIT,
+        PHARMACEUTICALFORM,
+        ROUTEOFADMINISTRATION,
+        NUMBEROFINGREDIENTS,
+        PHARMACEUTICALFORMCREATEDATE,
+        SUBSTANCE,
+        CASNUMBER,
+        LANGUAGECODE
+    }
+
+    enum FileType
+    {
+        Terms, 
+        Components,
+        TermComponents
+    }
