@@ -104,7 +104,7 @@ select l, Term, Code from cteING
 
 
 
-/* Get all term results in one output set */
+/* Get all term/code results in one output set */
 set nocount on
 select Level, Term, Code from
 (
@@ -142,7 +142,7 @@ select Level, Type, Value from
 select 'Level' as Level, 'Type' as Type, 'Value' as 'Value', 1 as x  
 union all 
 select distinct --top 10
-case when l.DictionaryLevelId=11 then 'ING' else 'MP' end as Level, 
+case when l.DictionaryLevelId=11 then 'MP' else 'ING' end as Level, 
 ctype.OID as Type,C_ENG.Name as Value, 2 as x 
 from MedicalDictTermComponents mdtc 
 inner join MedicalDictionaryLevel l on l.MedicalDictionaryID=mdtc.MedicalDictionaryID
@@ -154,41 +154,19 @@ and (l.DictionaryLevelId=11 or l.DictionaryLevelId=12)
 where rtrim(componentoutput.Value) <> ''
 
 
-select distinct top 100000 
-case when l.DictionaryLevelId=11 then 'ING' else 'MP' end as Level, 
-ctype.OID as Type,
-C_ENG.Name as Value, 2 as x from MedicalDictTermComponents mdtc 
-inner join MedicalDictionaryLevel l on l.MedicalDictionaryID=mdtc.MedicalDictionaryID
-INNER JOIN ComponentEngStrings C_ENG ON C_ENG.Id = mdtc.ENGStringID
-inner join MedicalDictComponentTypes ctype on ctype.ComponentTypeID=mdtc.ComponentTypeID
-where mdtc.FromVersionOrdinal=1 and mdtc.ToVersionOrdinal=2
-and (l.DictionaryLevelId=11 or l.DictionaryLevelId=12)
-and rtrim(C_ENG.Name)<>''
-
-
-
-
-select top 1 * from MedicalDictTermComponents
-
-select top 100 * from ComponentEngStrings
-
-select top 10 * from MedicalDictTermComponents
-
-
-
 -- get all termcomponent relationships
--- 34701262 rows returned, took 25 minutes.
-select Component, ComponentType, Code from
+-- 29205804 rows returned, took 42 minutes.
+select Component, ComponentType, Code, Level from
 (
-	select 'Component' as Component, 'ComponentType' as ComponentType, 'Code' as Code 
+	select 'Component' as Component, 'ComponentType' as ComponentType, 'Code' as Code, 'Level' as Level 
 	union all
-	select ces.Name as Component, ctypes.OID as ComponentType, t.Code as Code
+	select distinct ces.Name as Component, ctypes.OID as ComponentType, t.Code as Code, 
+		case when t.DictionaryLevelId=11 then 'MP' else 'ING' end as Level
 	from MedicalDictTermComponents mdtc 
 	join medicaldictionaryterm t on mdtc.TermID=t.TermId
 	join MedicalDictComponentTypes ctypes on ctypes.ComponentTypeID=mdtc.ComponentTypeID
 	join ComponentEngStrings ces on ces.Id=mdtc.ENGStringID
 	where mdtc.FromVersionOrdinal=1 and mdtc.ToVersionOrdinal=2
-	and t.DictionaryLevelId=11 or t.DictionaryLevelId=12
+	and (t.DictionaryLevelId=11 or t.DictionaryLevelId=12)
 ) as results
 where rtrim(Component)<>''
-

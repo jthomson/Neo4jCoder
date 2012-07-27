@@ -10,6 +10,7 @@ import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
 import java.util.Map;
+import javax.activity.InvalidActivityException;
 import org.neo4j.cypher.javacompat.ExecutionEngine;
 import org.neo4j.cypher.javacompat.ExecutionResult;
 import org.neo4j.graphdb.*;
@@ -37,6 +38,8 @@ public class Importer {
     private int m_NumAddedCodeNodes;
     
     private int m_NumAddedTermComponentRelationships;
+    private int m_NumMissingCodesinRelationships;
+    private int m_NumMissingComponentsinRelationships;
     
     private Index<Node> m_LevelIndex;
 
@@ -64,12 +67,11 @@ public class Importer {
         m_NumAddedCodeNodes = 0;
         
         m_NumAddedTermComponentRelationships = 0;
+        m_NumMissingCodesinRelationships = 0;
+        m_NumMissingComponentsinRelationships = 0;
         
         m_LevelIndex = m_Db.index().forNodes("Level", EXACT_CONFIG);
 //        m_ComponentLevelIndex = m_Db.index().forNodes("ComponentLevel", EXACT_CONFIG);
-        
-       // m_Components = new HashMap();
-        //m_Levels = new HashMap();
         
         if (startNew) {
             File file = new File(m_DbLocation);
@@ -83,6 +85,18 @@ public class Importer {
         m_Report = new Importer.Report(100000, 100);       
     }
     
+    public void runMissingTest() {
+        
+        Node c1 = getEnglishNodeByText("20080407");
+        Node c2 = getEnglishNodeByText("20080104");
+        
+        Node code1 = getCodeNodeByCodeAndLevel("4475", "ING");
+        
+        String a ="b";
+        
+        
+        
+    }
     
     private Map<String, String> getConfig() {
         return stringMap(
@@ -147,7 +161,7 @@ public class Importer {
         try 
         {
             final Importer.Data data = new Importer.Data(bf.readLine(), s_Delimiter, 0);
-            String line, component, term, componentType;
+            String line, component, code, componentType, level;
             Map<String,Object> map;
             m_Report.reset();
             int counter = 0;
@@ -164,9 +178,10 @@ public class Importer {
 
                 component = map.get("Component").toString();
                 componentType = map.get("ComponentType").toString();
-                term = map.get("Code").toString();
+                code = map.get("Code").toString();
+                level = map.get("Level").toString();
 
-                addTermComponentRelationship(componentType, component, term);
+                addTermComponentRelationship(componentType, component, code, level);
 
                 ensureRegularCommit(counter);
 
@@ -178,19 +193,37 @@ public class Importer {
             if (bf != null) bf.close();
         }
         m_Report.finishImport("TermComponentRelationships");   
+        if (m_NumMissingCodesinRelationships > 0) {
+            System.out.println("Missing Codes in Relationship Input: " + m_NumMissingCodesinRelationships);
+        }
+        if (m_NumMissingComponentsinRelationships > 0) {
+            System.out.println("Missing Components in Relationship Input: " + m_NumMissingComponentsinRelationships);
+        }
     }
     
-    private void addTermComponentRelationship(String componentType, String component, String term) {
+    private void addTermComponentRelationship(String componentType, String component, String code, String level) throws InvalidActivityException {
         
-        Node componentNode = getEnglishNodeByText(term)
+        Node componentNode = getEnglishNodeByText(component);
         
-        Node termNode = getEnglishNodeByText(term);
+        Node codeNode = getCodeNodeByCodeAndLevel(code, level);
         
-        if (termNode == null) {
-            String a = "b";
+        if (componentNode == null) {
+            m_NumMissingComponentsinRelationships++;
+            System.out.println(String.format("componentNode not found. code=%s, componentType=%s, component=%s, level=%s", code, componentType, component, level));
+            return;
+            
+            //throw new InvalidActivityException("Component is null in addTermComponentRelationship!");        
+        }
+        if (codeNode == null) {
+            m_NumMissingCodesinRelationships++;
+            System.out.println(String.format("codeNode not found. code=%s, componentType=%s, component=%s, level=%s", code, componentType, component, level));
+            return;
+            
+            //throw new InvalidActivityException("codeNode not retrieved in addTermComponentRelationship!");
         }
         
-        
+        codeNode.createRelationshipTo(componentNode, DictRelType.valueOf(componentType));
+        m_NumAddedTermComponentRelationships++;
     }
     
     private void importComponentDataNodes(File file) throws IOException 
@@ -304,9 +337,10 @@ public class Importer {
     
     public void outputResults() {
                
-        System.out.println("~~Results for data load:");
+        System.out.println("~~Results for data load~~");
         System.out.println("English text nodes created: " + m_NumAddedEnglishNodes);
         System.out.println("Base nodes created: " + m_NumAddedCodeNodes);
+        System.out.println("TermComponent relationships created: " + m_NumAddedTermComponentRelationships);
     }
     
     /*
@@ -489,7 +523,7 @@ public class Importer {
      * 
      * Level is assumed to exist.
      */
-    private void addTermNode(String level, String term, String code)
+    private void addTermNode(String level, String term, String code) throws InvalidActivityException
     {
         if (level==null || level.trim().length()==0) {    
             throw new IllegalArgumentException("level must be provided!");
@@ -514,11 +548,11 @@ public class Importer {
        
        Node levelNode = getLevelNode(level);
        if (levelNode == null) {
-           int a = 4;
+           throw new InvalidActivityException("Level node not defined in addTermNode!");
        }
-       levelNode.createRelationshipTo(codeNode,DictRelType.LevelCode);
-       codeNode.createRelationshipTo(englishNode,DictRelType.TermEnglish);
-        
+       
+       codeNode.createRelationshipTo(levelNode,DictRelType.LevelCode);
+       codeNode.createRelationshipTo(englishNode,DictRelType.TermEnglish);      
     }
     
     private Node addEnglishNode(String value) {
@@ -552,7 +586,6 @@ public class Importer {
     
     private Node getCodeNodeByCodeAndLevel(String code, String level) {
         
-        
         IndexHits<Node> hits = m_CodeIndex.get(Constants.Property.CodeNodeKey, code);
         try
         {
@@ -573,7 +606,7 @@ public class Importer {
     private boolean doesNodeHaveLevelRelationship(Node node, String level) {
         
         Traverser traverser = node.traverse(Order.BREADTH_FIRST,
-                StopEvaluator.END_OF_GRAPH,
+                StopEvaluator.DEPTH_ONE,
                 new ReturnableEvaluator()
                 {
                     @Override
@@ -586,12 +619,22 @@ public class Importer {
                     }
                 },
                 DictRelType.LevelCode,
-                Direction.OUTGOING );
-            for ( Node travNode : traverser )
-            {
-                if (travNode.getProperty(Constants.Property.LevelName) == level)
-                    return true;
+                Direction.BOTH );
+        for ( Node travNode : traverser )
+        {
+            Object prop = travNode.getProperty(Constants.Property.LevelName, null);
+            if (prop != null && level.equals(prop)) {
+                return true;
             }
+        }
+/*        
+        for (Relationship rel : node.getRelationships()) {
+            String relType = rel.getType().toString();
+            
+            Node endNode = rel.getEndNode();
+            String endNodeType = node.getProperty("Type").toString();
+        }
+*/
         return false;
     }
    
@@ -638,7 +681,7 @@ public class Importer {
         private final long batch;
         private final long dots;
         private long count;
-        private long time, batchTime;
+        private long time, batchTime, totalTime;
 
         public Report(long batch, int dots) {
             this.batch = batch;
@@ -647,6 +690,7 @@ public class Importer {
 
         public void reset() {
             count = 0;
+            totalTime = 0;
             batchTime = time = System.currentTimeMillis();
         }
 
@@ -654,15 +698,21 @@ public class Importer {
             if ((++count % dots) != 0) return;
             System.out.print(".");
             if ((count % batch) != 0) return;
+            
             long now = System.currentTimeMillis();
-            System.out.println((now - batchTime) + " ms for "+batch);
+            long timeTaken = now - batchTime;
+            System.out.println(timeTaken + " ms for " + batch);     
+            if ((count % 1000000)==0) {
+                System.out.println(count + " items have taken " + totalTime + " ms." );
+            }
             batchTime = now;
+            totalTime+=timeTaken;
         }
 
         public void finishImport(String type) {
-            
+
             System.out.println("\nImporting " + count + " " + type + " took " + (System.currentTimeMillis() - time) / 1000 + " seconds ");
-            System.out.println("Thousands of total " + type + " created/second: " + count*1000/(double)time);
+            System.out.println("Thousands of total " + type + " created/second: " + count/(double)totalTime);                        
         }
     }
 
