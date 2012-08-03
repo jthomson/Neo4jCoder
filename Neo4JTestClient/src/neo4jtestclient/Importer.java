@@ -19,6 +19,7 @@ import org.neo4j.graphdb.index.Index;
 import org.neo4j.graphdb.index.IndexHits;
 import static org.neo4j.helpers.collection.MapUtil.map;
 import static org.neo4j.helpers.collection.MapUtil.stringMap;
+import org.neo4j.index.impl.lucene.Cache;
 import org.neo4j.index.impl.lucene.LuceneIndexImplementation;
 import static org.neo4j.index.impl.lucene.LuceneIndexImplementation.EXACT_CONFIG;
 import org.neo4j.kernel.EmbeddedGraphDatabase;
@@ -28,7 +29,7 @@ public class Importer {
     private EmbeddedGraphDatabase m_Db;
     private Node m_RootNode; 
     private Transaction m_Tran;
-    private boolean m_Init;
+
     private String m_DbLocation;
     
     private Index<Node> m_EnglishTextIndex;
@@ -44,8 +45,9 @@ public class Importer {
     private Index<Node> m_LevelIndex;
 
     private static String s_Delimiter = ";";
-    private int m_CommitSize = 10000;
+    private static int s_ResultLimit = 25;
     
+        private int m_CommitSize = 10000;
 
     public Importer(String dbLocation, boolean startNew) {
         
@@ -61,6 +63,8 @@ public class Importer {
         if (m_RootNode == null) m_RootNode = m_Db.createNode();
         
         m_EnglishTextIndex = m_Db.index().forNodes("EnglishText", LuceneIndexImplementation.FULLTEXT_CONFIG );
+        // TODO: to_lower_case=true in englishtext.
+        
         m_NumAddedEnglishNodes = 0;
         
         m_CodeIndex = m_Db.index().forNodes("Code", EXACT_CONFIG);
@@ -71,7 +75,6 @@ public class Importer {
         m_NumMissingComponentsinRelationships = 0;
         
         m_LevelIndex = m_Db.index().forNodes("Level", EXACT_CONFIG);
-//        m_ComponentLevelIndex = m_Db.index().forNodes("ComponentLevel", EXACT_CONFIG);
         
         if (startNew) {
             File file = new File(m_DbLocation);
@@ -83,21 +86,14 @@ public class Importer {
          
         
         m_Report = new Importer.Report(100000, 100);       
-    }
-    
-    public void runMissingTest() {
-        
-        Node c1 = getEnglishNodeByText("20080407");
-        Node c2 = getEnglishNodeByText("20080104");
-        
-        Node code1 = getCodeNodeByCodeAndLevel("4475", "ING");
-        
-        String a ="b";
-        
-        
         
     }
     
+    private void clearCache() {
+        
+//        Cache cache = m_Db.getManagementBean(Cache.class);
+//        cache.clear();
+    }
     private Map<String, String> getConfig() {
         return stringMap(
             "dump_configuration", "true",
@@ -117,7 +113,6 @@ public class Importer {
 
         m_Tran.success();
         m_Tran.finish();
-        m_Init = false;
         
     }
    
@@ -224,6 +219,10 @@ public class Importer {
         
         codeNode.createRelationshipTo(componentNode, DictRelType.valueOf(componentType));
         m_NumAddedTermComponentRelationships++;
+        
+        // TODO: create base Component Nodes for usage across Eng and Japanese.
+        // could also disregard and implement multiple graph DBs...
+        
     }
     
     private void importComponentDataNodes(File file) throws IOException 
@@ -285,7 +284,7 @@ public class Importer {
         String antiHyperTensives = "start terms=node:EnglishText(" + Constants.Property.EnglishText + "='ANTIHYPERTENSIVES') return terms";
         stringSearch(antiHyperTensives);
 
-        englishTermLuceneSearch("ANTIHYPERTENSIVES");
+        englishTermLevelSearch("ANTIHYPERTENSIVES");
         
         String twoWildcard = "start terms=node:EnglishText(\"EnglishText:A* AND EnglishText:D*\") return terms";
         stringSearch(twoWildcard);
@@ -298,21 +297,81 @@ public class Importer {
         
     }
     
-    private void englishTermLuceneSearch(String queryString) {
+    public void englishTermSearch(String text) {
         
-        String searchString = "start terms=node:EnglishText(\"" + Constants.Property.EnglishText + ":" + queryString + "\") return terms";
+        String searchString = "start terms=node:EnglishText(\"" + Constants.Property.EnglishText + ":" + text + "\") match terms-[:TermEnglish]-a return count(distinct terms)";
         stringSearch(searchString);     
     }
-            
-    private void stringSearch(String query) {
         
+    public void englishLevelTermSearch(String text) {
+        
+        String searchString = "start levels=node:Level(LevelN = \"*\") match levels-[:LevelCode]-a-[:TermEnglish]-terms where terms.EnglishText = '" + text + "' return count(distinct terms)";
+        stringSearch(searchString);     
+    }    
+
+    public void englishTermLevelSearch(String text) {
+        
+        String searchString = "start terms=node:EnglishText(\"" + Constants.Property.EnglishText + ":" + text + "\") match terms-[:TermEnglish]-a-[:LevelCode]-level return count(distinct terms)";
+        stringSearch(searchString);     
+    }
+    public void englishTermLevelSearchTwoEndpoints(String text) {
+        
+        String searchString = "start levels=node:Level(\"LevelN:*\"), terms=node:EnglishText(\"" + Constants.Property.EnglishText + ":" 
+                    + text + "\") match levels-[:LevelCode]-a-[:TermEnglish]-terms return count(distinct terms)";
+        stringSearch(searchString);      
+    }
+            
+    public void searchTermLevel(String text, String level) {
+              
+        String searchString = "start terms=node:EnglishText(\"EnglishText:" + text 
+                + "\") match terms<-[:TermEnglish]-a-[:LevelCode]->level where level." + Constants.Property.LevelName + "='" + level + "' return count(distinct terms)";
+        stringSearch(searchString);          
+    }
+    
+    public void countTermsByLevelNoDirection(String text, String level) {
+              
+        String searchString = "start terms=node:EnglishText(\"EnglishText:" + text 
+                + "\") match terms-[:TermEnglish]-a-[:LevelCode]-level where level." + Constants.Property.LevelName + "='" + level + "' return count(distinct terms)";
+        stringSearch(searchString);          
+    }
+    
+    public void getTermsByLevelNoDirection(String text, String level) {
+              
+        String searchString = "start terms=node:EnglishText(\"EnglishText:" + text 
+                + "\") match terms-[:TermEnglish]-a-[:LevelCode]-level where level." + Constants.Property.LevelName + "='" + level + "' return distinct terms";
+        stringSearch(searchString);          
+    }    
+    
+    public void getTermsByLevelNoDirectionSorted(String text, String level) {
+              
+        String searchString = "start terms=node:EnglishText(\"EnglishText:" + text 
+                + "\") match terms-[:TermEnglish]-a-[:LevelCode]-level where level." + Constants.Property.LevelName + "='" + level +
+                "' return distinct terms order by terms." + Constants.Property.EnglishText + " asc limit " + s_ResultLimit;
+        stringSearch(searchString);          
+    }   
+    
+    
+    public void getTermComponent(String term, String dictionaryLevel, String component, String componentType) {
+    
+        String searchString = "start compTextNodes=node:EnglishText(\"EnglishText:" + component + "\")"
+                + " match compTextNodes-[:" + componentType + "]-baseTerm-[:TermEnglish]-termText, baseTerm-[:LevelCode]-level " 
+                + "where level.LevelName='"+ dictionaryLevel +"' and termText." + Constants.Property.EnglishText + "='" + term + "' return distinct baseTerm";
+        stringSearch(searchString);                   
+    }
+    
+    
+    
+    
+    
+    public void stringSearch(String query) {
+       
+        System.out.println("Query: " + query);
         ExecutionEngine engine = new ExecutionEngine( m_Db );
         ExecutionResult result = engine.execute(query);   
-        System.out.println("Query: " + query);
         System.out.println(result);
     }
     
-    private void testCypherSearch() {
+    public void testCypherSearch() {
          
         String rootNode="start n=node(0) return n";
         stringSearch(rootNode);
@@ -325,14 +384,7 @@ public class Importer {
         
         String rootNodeChildrenWithOrdering="start root=node(0) match root -[:DictionaryLevel]->levelordered return levelordered order by levelordered.LevelName asc";
         stringSearch(rootNodeChildrenWithOrdering);
-
-        String drugRecordNumberComponentLevel = "start components=node:ComponentLevel(" + Constants.Node.BaseComponent + "='DRUGRECORDNUMBER') return components";
-        stringSearch(drugRecordNumberComponentLevel);
-
-        String drugRecordNumberComponents = "start components=node:ComponentLevel(" + Constants.Node.BaseComponent + "='DRUGRECORDNUMBER') match components-[:ComponentEnglish]->englishnodes return englishnodes";
-        stringSearch(drugRecordNumberComponents);
-        
-        
+            
     }
     
     public void outputResults() {
@@ -360,62 +412,6 @@ public class Importer {
         
     }
    
-/*
-    private void createComponentTypeNodes() {
-        
-        addComponentTypeNode("DRUGRECORDNUMBER", Constants.DictionaryLevel.Ingredient);
-        addComponentTypeNode("SEQUENCENUMBER1", Constants.DictionaryLevel.Ingredient);
-        addComponentTypeNode("SEQUENCENUMBER2", Constants.DictionaryLevel.Ingredient);
-        addComponentTypeNode("SEQUENCENUMBER3", Constants.DictionaryLevel.Ingredient);
-        addComponentTypeNode("SEQUENCENUMBER4", Constants.DictionaryLevel.Ingredient);
-        addComponentTypeNode("GENERIC", Constants.DictionaryLevel.Ingredient);
-        addComponentTypeNode("NAMESPECIFIER", Constants.DictionaryLevel.Ingredient);
-        addComponentTypeNode("MARKETINGAUTHORIZATIONNUMBER", Constants.DictionaryLevel.Ingredient);
-        addComponentTypeNode("MARKETINGAUTHORIZATIONDATE", Constants.DictionaryLevel.Ingredient);
-        addComponentTypeNode("MARKETINGAUTHORIZATIONWITHDRAWALDATE", Constants.DictionaryLevel.Ingredient);
-        addComponentTypeNode("COUNTRY", Constants.DictionaryLevel.Ingredient);
-        addComponentTypeNode("COMPANY", Constants.DictionaryLevel.Ingredient);
-        addComponentTypeNode("COMPANYCOUNTRY", Constants.DictionaryLevel.Ingredient);
-        addComponentTypeNode("MARKETINGAUTHORIZATIONHOLDER", Constants.DictionaryLevel.Ingredient);
-        addComponentTypeNode("MARKETINGAUTHORIZATIONHOLDERCOUNTRY", Constants.DictionaryLevel.Ingredient);
-        addComponentTypeNode("SOURCEYEAR", Constants.DictionaryLevel.Ingredient);
-        addComponentTypeNode("SOURCE", Constants.DictionaryLevel.Ingredient);
-        addComponentTypeNode("SOURCECOUNTRY", Constants.DictionaryLevel.Ingredient);
-        addComponentTypeNode("PRODUCTTYPE", Constants.DictionaryLevel.Ingredient);
-        addComponentTypeNode("PRODUCTGROUP", Constants.DictionaryLevel.Ingredient);
-        addComponentTypeNode("PRODUCTGROUPDATERECORDED", Constants.DictionaryLevel.Ingredient);
-        addComponentTypeNode("CREATEDATE", Constants.DictionaryLevel.Ingredient);
-        addComponentTypeNode("DATECHANGED", Constants.DictionaryLevel.Ingredient);
-        addComponentTypeNode("INGREDIENTCREATEDATE", Constants.DictionaryLevel.MP);
-        addComponentTypeNode("QUANTITY", Constants.DictionaryLevel.MP);
-        addComponentTypeNode("QUANTITY2", Constants.DictionaryLevel.MP);
-        addComponentTypeNode("UNIT", Constants.DictionaryLevel.MP);
-        addComponentTypeNode("PHARMACEUTICALFORM", Constants.DictionaryLevel.MP);
-        addComponentTypeNode("ROUTEOFADMINISTRATION", Constants.DictionaryLevel.MP);
-        addComponentTypeNode("NUMBEROFINGREDIENTS", Constants.DictionaryLevel.MP);
-        addComponentTypeNode("PHARMACEUTICALFORMCREATEDATE", Constants.DictionaryLevel.MP);
-        addComponentTypeNode("SUBSTANCE", Constants.DictionaryLevel.MP);
-        addComponentTypeNode("CASNUMBER", Constants.DictionaryLevel.MP);
-        addComponentTypeNode("LANGUAGECODE", Constants.DictionaryLevel.MP);
-    }
-    
-    private void addComponentTypeNode(String name, String level) {
-        
-        Node componentTypeNode = m_Db.createNode();
-        componentTypeNode.setProperty(Constants.Node.Type, Constants.Node.BaseComponent);
-        componentTypeNode.setProperty(Constants.Property.ComponentName, name);
-        
-        Node levelNode = getLevelNode(level);
-        levelNode.createRelationshipTo(componentTypeNode, DictRelType.LevelComponent);
-        
-        m_ComponentLevelIndex.add(componentTypeNode, Constants.Node.BaseComponent, name);       
-    }
-  
-    private Node getComponentLevelNode(String component) {
-    
-        return m_ComponentLevelIndex.get(Constants.Node.BaseComponent, component).getSingle();
-    }
-*/    
     private Node getLevelNode(String level) {
         
         return m_LevelIndex.get(Constants.Node.Level, level).getSingle();     
@@ -511,11 +507,7 @@ public class Importer {
        if (englishNode == null) {
            englishNode = addEnglishNode(name);
        }
- 
-/*       
-       Node componentLevelNode = getComponentLevelNode(componentType);
-       componentLevelNode.createRelationshipTo(englishNode,DictRelType.ComponentEnglish);
-*/     
+    
     }
     
     /*

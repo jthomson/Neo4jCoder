@@ -156,6 +156,7 @@ where rtrim(componentoutput.Value) <> ''
 
 -- get all termcomponent relationships
 -- 29205804 rows returned, took 42 minutes.
+set nocount on
 select Component, ComponentType, Code, Level from
 (
 	select 'Component' as Component, 'ComponentType' as ComponentType, 'Code' as Code, 'Level' as Level 
