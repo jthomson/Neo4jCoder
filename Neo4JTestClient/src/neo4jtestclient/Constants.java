@@ -44,7 +44,7 @@ public final class Constants {
 }
 
     enum DictRelType implements RelationshipType
-    {
+    {   
         DictionaryLevel,
         LevelCode,
         TermEnglish,
@@ -52,6 +52,14 @@ public final class Constants {
         TermComponent,
         ComponentEnglish,
         LevelComponent,
+        
+        // WhoDrug Levels
+        ATC1,
+        ATC2,
+        ATC3,
+        ATC4,
+        ING,
+        MP,
         
         // ComponentRelationshipTypes
         DRUGRECORDNUMBER,
@@ -93,6 +101,7 @@ public final class Constants {
     enum FileType
     {
         Terms, 
+        TermRels,
         Components,
-        TermComponents
+        TermComponentRels
     }

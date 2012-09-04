@@ -14,20 +14,44 @@ public class Neo4JTestClient {
      * @param args the command line arguments
      */
     public static void main(String[] args) throws IOException {
-//                
-//        Importer componentImporter = new Importer("/neoDB", true);
-//        componentImporter.importFile(FileType.Components, "C:\\Users\\jthomson\\Desktop\\Components.csv");
+        
+        performNewImport();
+    }   
+    
+    public static void performNewImport() throws IOException {
+    
+        String db = "/refinedDB";
+//        Importer componentImporter = new Importer(db, true);
+//        componentImporter.importFile(FileType.Components, "C:\\Users\\jthomson\\Desktop\\CoderData\\Components.csv");
 //        
-//        Importer termImporter = new Importer("/neoDB", false);
-//        termImporter.importFile(FileType.Terms, "C:\\Users\\jthomson\\Desktop\\FirstVersion.csv"); 
+//        Importer termImporter = new Importer(db, false);
+//        termImporter.importFile(FileType.Terms, "C:\\Users\\jthomson\\Desktop\\CoderData\\Terms.csv");
 //        
-//        Importer tcImporter = new Importer("/neoDB", false);
-//        tcImporter.importFile(FileType.TermComponents, "C:\\Users\\jthomson\\Desktop\\TermCompRelwLev.csv"); 
-//        
-//        29205803 relationships took 29950 seconds w/3GB RAM, or approx ~1025 uploaded/second.
-//        // 7.29 GB space.
-               
-        Importer searchTest = new Importer("/neoDB", false);
+        Importer termRelImporter = new Importer(db, false);
+        termRelImporter.importFile(FileType.TermRels,"C:\\Users\\jthomson\\Desktop\\CoderData\\TermRels.csv");
+        
+        Importer termCompRelImporter = new Importer(db, false);
+        termCompRelImporter.importFile(FileType.TermComponentRels,"C:\\Users\\jthomson\\Desktop\\CoderData\\TermComponentRels.csv");
+    }
+    
+    public static void PerformOldImport() {
+     /*                    
+        Importer componentImporter = new Importer("/neoDB", true);
+        componentImporter.importFile(FileType.Components, "C:\\Users\\jthomson\\Desktop\\Components.csv");
+        
+        Importer termImporter = new Importer("/neoDB", false);
+        termImporter.importFile(FileType.Terms, "C:\\Users\\jthomson\\Desktop\\FirstVersion.csv"); 
+        
+        Importer tcImporter = new Importer("/neoDB", false);
+        tcImporter.importFile(FileType.TermComponents, "C:\\Users\\jthomson\\Desktop\\TermCompRelwLev.csv"); 
+        
+        //29205803 relationships took 29950 seconds w/3GB RAM, or approx ~1025 uploaded/second.
+        // 7.29 GB space.
+     */    
+    }
+    
+    public static void performOldSearch() {
+                Importer searchTest = new Importer("/neoDB", false);
            
         String tyWildcard = "ty*";
         String mpLevel = "MP";
@@ -61,7 +85,7 @@ public class Neo4JTestClient {
         // term/level search takes 3.7 seconds to count 
         //searchTest.countTermsByLevelNoDirection(adWildcard, mpLevel);
         
-        searchTest.getTermsByLevelNoDirection(adWildcard, mpLevel);
+        //searchTest.getTermsByLevelNoDirection(adWildcard, mpLevel);
         searchTest.getTermsByLevelNoDirectionSorted(adWildcard, mpLevel);
         
         String gelatinComponentTypes = "start compTextNodes=node:EnglishText(\"EnglishText:GELATIN\") match compTextNodes-[r]-baseTerm return distinct type(r) as RelationshipType";
@@ -71,8 +95,5 @@ public class Neo4JTestClient {
         
         searchTest.getTermsByLevelNoDirection(pE, ingLevel);
         // MUCH slower with all upper case input.  76s vs 1s!
-        
-        
-        
-    }   
+    }
 }

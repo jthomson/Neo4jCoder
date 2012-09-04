@@ -42,9 +42,12 @@ public class Importer {
     private int m_NumMissingCodesinRelationships;
     private int m_NumMissingComponentsinRelationships;
     
-    private Index<Node> m_LevelIndex;
+    private int m_NumDictCodeRels;
+    private int m_NumCodeCodeRels;
+    private int m_NumSameCodeRels;
 
     private static String s_Delimiter = ";";
+    private static String s_TopLevelKeyword = "Top";
     private static int s_ResultLimit = 25;
     
         private int m_CommitSize = 10000;
@@ -73,8 +76,9 @@ public class Importer {
         m_NumAddedTermComponentRelationships = 0;
         m_NumMissingCodesinRelationships = 0;
         m_NumMissingComponentsinRelationships = 0;
-        
-        m_LevelIndex = m_Db.index().forNodes("Level", EXACT_CONFIG);
+        m_NumDictCodeRels = 0;
+        m_NumCodeCodeRels = 0;
+        m_NumSameCodeRels = 0;
         
         if (startNew) {
             File file = new File(m_DbLocation);
@@ -94,6 +98,7 @@ public class Importer {
 //        Cache cache = m_Db.getManagementBean(Cache.class);
 //        cache.clear();
     }
+    
     private Map<String, String> getConfig() {
         return stringMap(
             "dump_configuration", "true",
@@ -109,11 +114,10 @@ public class Importer {
     private void setupDictionaryBase() {
         
         m_Tran = m_Db.beginTx();
-        createDictionaryAndLevels();
+        createDictionaryBase();
 
         m_Tran.success();
-        m_Tran.finish();
-        
+        m_Tran.finish();       
     }
    
     public void importFile(FileType type, String fileLocation) throws IOException {
@@ -132,18 +136,22 @@ public class Importer {
                 case Terms:
                     importTermDataNodes(file);
                     break;
+                
+                case TermRels:
+                    importTermRelationships(file);
+                    break;
               
                 case Components:
                     importComponentDataNodes(file);
                     break;
              
-                case TermComponents:
+                case TermComponentRels:
                     importTermComponentRelationships(file);
                     break;
             }
 
             m_Tran.success();
-            outputResults();
+            outputResults(type);
             
         } finally {
             finish();
@@ -196,11 +204,39 @@ public class Importer {
         }
     }
     
+    private void addTermRelationship(String childCode, String parentCode, String level) {
+        
+        Node childNode = getCodeNodeByCode(childCode);
+        if (childNode == null) {
+            String a = childCode;
+            String b = parentCode;
+        }
+        
+        
+        if (s_TopLevelKeyword.equals(parentCode)) {
+            m_RootNode.createRelationshipTo(childNode, DictRelType.valueOf(level));
+            m_NumDictCodeRels++;
+        }
+        // create new child code node if code is the same across levels.  
+        // Don't add it to the index.
+        else if (childCode == parentCode) {
+            Node parentNode = getCodeNodeByCode(parentCode);
+            Node newChildNode = addCodeNode(childCode, false);
+            parentNode.createRelationshipTo(newChildNode, DictRelType.valueOf(level));
+            m_NumSameCodeRels++;
+        }
+        else {
+            Node parentNode = getCodeNodeByCode(parentCode);
+            parentNode.createRelationshipTo(childNode, DictRelType.valueOf(level));
+            m_NumCodeCodeRels++;
+        }
+    }
+    
     private void addTermComponentRelationship(String componentType, String component, String code, String level) throws InvalidActivityException {
         
         Node componentNode = getEnglishNodeByText(component);
         
-        Node codeNode = getCodeNodeByCodeAndLevel(code, level);
+        Node codeNode = getCodeNodeByCode(code);
         
         if (componentNode == null) {
             m_NumMissingComponentsinRelationships++;
@@ -219,19 +255,16 @@ public class Importer {
         
         codeNode.createRelationshipTo(componentNode, DictRelType.valueOf(componentType));
         m_NumAddedTermComponentRelationships++;
-        
-        // TODO: create base Component Nodes for usage across Eng and Japanese.
-        // could also disregard and implement multiple graph DBs...
-        
+             
     }
     
-    private void importComponentDataNodes(File file) throws IOException 
+     private void importComponentDataNodes(File file) throws IOException 
     {     
         BufferedReader bf = new BufferedReader(new FileReader(file));
         try 
         {
             final Importer.Data data = new Importer.Data(bf.readLine(), s_Delimiter, 0);
-            String line, level, type, value;
+            String line, componentName;
             Map<String,Object> map;
             m_Report.reset();
             int counter = 0;
@@ -245,12 +278,9 @@ public class Importer {
                 }
 
                 map = map(data.update(line));
-
-                level = map.get("Level").toString();
-                type = map.get("Type").toString();
-                value = map.get("Value").toString();
-
-                addComponentNode(level, type, value);
+                
+                componentName = map.get("ComponentName").toString();
+                addComponentNode(componentName);
 
                 ensureRegularCommit(counter);
 
@@ -387,46 +417,42 @@ public class Importer {
             
     }
     
-    public void outputResults() {
+    public void outputResults(FileType type) {
                
         System.out.println("~~Results for data load~~");
-        System.out.println("English text nodes created: " + m_NumAddedEnglishNodes);
-        System.out.println("Base nodes created: " + m_NumAddedCodeNodes);
-        System.out.println("TermComponent relationships created: " + m_NumAddedTermComponentRelationships);
+        
+        switch (type)
+        {
+            case Terms:
+                System.out.println("Term English text nodes created: " + m_NumAddedEnglishNodes);
+                System.out.println("Code nodes created: " + m_NumAddedCodeNodes);
+                break;
+
+            case TermRels:
+                System.out.println("Dict-Code Relationships created: " + m_NumDictCodeRels);
+                System.out.println("Code->Code Relationships created: " + m_NumCodeCodeRels);
+                System.out.println("Same Code Relationships/Child Nodes created: " + m_NumSameCodeRels);
+                
+                break;
+
+            case Components:
+                System.out.println("Component English text nodes created: " + m_NumAddedEnglishNodes);
+                break;
+
+            case TermComponentRels:
+                System.out.println("TermComponent relationships created: " + m_NumAddedTermComponentRelationships);
+                break;
+        }            
     }
     
     /*
      * Manually create whodrug dictionary structure for now.
     */
-    private void createDictionaryAndLevels() {
+    private void createDictionaryBase() {
         
         m_RootNode.setProperty(Constants.Node.Type, Constants.Node.Dictionary);
         m_RootNode.setProperty(Constants.Property.DictionaryName, "WhoDrugC");
         
-        addLevelNodeAndRelationship(Constants.DictionaryLevel.ATC1);
-        addLevelNodeAndRelationship(Constants.DictionaryLevel.ATC2);
-        addLevelNodeAndRelationship(Constants.DictionaryLevel.ATC3);
-        addLevelNodeAndRelationship(Constants.DictionaryLevel.ATC4);
-        addLevelNodeAndRelationship(Constants.DictionaryLevel.Ingredient);
-        addLevelNodeAndRelationship(Constants.DictionaryLevel.MP);
-        
-    }
-   
-    private Node getLevelNode(String level) {
-        
-        return m_LevelIndex.get(Constants.Node.Level, level).getSingle();     
-    }
-    
-    private Node addLevelNodeAndRelationship(String levelName) {
-        
-        Node levelNode = m_Db.createNode();
-        levelNode.setProperty(Constants.Node.Type, Constants.Node.Level);
-        levelNode.setProperty(Constants.Property.LevelName, levelName);
-        
-        m_RootNode.createRelationshipTo(levelNode, DictRelType.DictionaryLevel);
-        m_LevelIndex.add(levelNode, Constants.Node.Level, levelName);
-        
-        return levelNode;
     }
     
     private static void registerShutdownHook(final GraphDatabaseService graphDb)
@@ -444,16 +470,13 @@ public class Importer {
         } );
     }
     
-    /* 
-    * 
-    */
-    private void importTermDataNodes(File file) throws IOException {
+    private void importTermRelationships(File file) throws IOException {
          
         BufferedReader bf = new BufferedReader(new FileReader(file));
         try 
         {
             final Importer.Data data = new Importer.Data(bf.readLine(), s_Delimiter, 0);
-            String line, level, term, code;
+            String line, childCode, parentCode, level;
             Map<String,Object> map;
             m_Report.reset();
             int counter = 0;
@@ -468,11 +491,48 @@ public class Importer {
 
                 map = map(data.update(line));
 
+                childCode = map.get("ChildCode").toString();
+                parentCode = map.get("ParentCode").toString();
                 level = map.get("Level").toString();
+
+                addTermRelationship(childCode, parentCode, level);
+
+                ensureRegularCommit(counter);
+
+                m_Report.dots();
+            }
+        }
+        finally {
+            if (bf!=null) bf.close();
+        }
+        m_Report.finishImport("TermRelationships");
+    }
+    
+    private void importTermDataNodes(File file) throws IOException {
+         
+        BufferedReader bf = new BufferedReader(new FileReader(file));
+        try 
+        {
+            final Importer.Data data = new Importer.Data(bf.readLine(), s_Delimiter, 0);
+            String line, term, code;
+            Map<String,Object> map;
+            m_Report.reset();
+            int counter = 0;
+            while ((line = bf.readLine()) != null) {
+
+                counter++;
+
+                // skip blank lines
+                if (line.trim().length() == 0) {
+                    continue;
+                } 
+
+                map = map(data.update(line));
+
                 term = map.get("Term").toString();
                 code = map.get("Code").toString();
 
-                addTermNode(level, term, code);
+                addTermNode(term, code);
 
                 ensureRegularCommit(counter);
 
@@ -490,24 +550,24 @@ public class Importer {
      * 
      * Level is assumed to exist.
      */
-    private void addComponentNode(String level, String componentType, String name)
+    private void addComponentNode(String componentName)
     {
-        if (level==null || level.trim().length()==0) {    
-            throw new IllegalArgumentException("level must be provided!");
-        }
-        if (componentType==null || componentType.trim().length()==0) {    
-            throw new IllegalArgumentException("componentType must be provided!");
-        }
-        if (name==null || name.trim().length()==0) {    
+        if (componentName==null || componentName.trim().length()==0) {    
             throw new IllegalArgumentException("name must be provided!");
         }
         
        // get english node or create if it doesn't exist
-       Node englishNode = getEnglishNodeByText(name);
-       if (englishNode == null) {
-           englishNode = addEnglishNode(name);
-       }
-    
+       retrieveCreateEnglishNode(componentName); 
+    }
+
+            
+    private Node retrieveCreateEnglishNode(String text) {
+        
+       Node node = getEnglishNodeByText(text);
+       if (node == null) {
+           node = addEnglishNode(text);
+       }     
+       return node;
     }
     
     /*
@@ -515,11 +575,8 @@ public class Importer {
      * 
      * Level is assumed to exist.
      */
-    private void addTermNode(String level, String term, String code) throws InvalidActivityException
+    private void addTermNode(String term, String code) throws InvalidActivityException
     {
-        if (level==null || level.trim().length()==0) {    
-            throw new IllegalArgumentException("level must be provided!");
-        }
         if (term==null || term.trim().length()==0) {    
             throw new IllegalArgumentException("term must be provided!");
         }
@@ -528,22 +585,13 @@ public class Importer {
         }
         
        // get english and code nodes or create if they don't exist
-       Node englishNode = getEnglishNodeByText(term);
-       if (englishNode == null) {
-           englishNode = addEnglishNode(term);
-       }
+       Node englishNode = retrieveCreateEnglishNode(term);
        
-       Node codeNode = getCodeNodeByCodeAndLevel(code, level);
+       Node codeNode = getCodeNodeByCode(code);
        if (codeNode == null) {
            codeNode = addCodeNode(code);
        }
        
-       Node levelNode = getLevelNode(level);
-       if (levelNode == null) {
-           throw new InvalidActivityException("Level node not defined in addTermNode!");
-       }
-       
-       codeNode.createRelationshipTo(levelNode,DictRelType.LevelCode);
        codeNode.createRelationshipTo(englishNode,DictRelType.TermEnglish);      
     }
     
@@ -561,14 +609,20 @@ public class Importer {
     
     private Node addCodeNode(String code) {
         
+        return addCodeNode(code, true);
+    }
+    
+    private Node addCodeNode(String code, boolean addToIndex) {
+        
         Node codeNode = m_Db.createNode();
         codeNode.setProperty(Constants.Node.Type, Constants.Node.Base);
         codeNode.setProperty(Constants.Property.Code, code);
         
-        m_CodeIndex.add(codeNode, Constants.Property.CodeNodeKey, code);
+        if (addToIndex) m_CodeIndex.add(codeNode, Constants.Property.CodeNodeKey, code);
+        
         m_NumAddedCodeNodes++;
         
-        return codeNode;      
+        return codeNode;       
     }
     
     private Node getEnglishNodeByText(String text) {
@@ -576,6 +630,18 @@ public class Importer {
         return m_EnglishTextIndex.get(Constants.Property.EnglishText, text).getSingle();   
     }
     
+    /***
+     * Get a code node by code.
+     * @param code
+     * @return Node or null if not found
+     * Throw exception if more than one node is returned
+     */
+    private Node getCodeNodeByCode(String code) {
+        
+        return m_CodeIndex.get(Constants.Property.CodeNodeKey, code).getSingle();
+    }
+    
+    /*
     private Node getCodeNodeByCodeAndLevel(String code, String level) {
         
         IndexHits<Node> hits = m_CodeIndex.get(Constants.Property.CodeNodeKey, code);
@@ -594,6 +660,7 @@ public class Importer {
         }
     
     }
+    */
     
     private boolean doesNodeHaveLevelRelationship(Node node, String level) {
         
@@ -642,7 +709,7 @@ public class Importer {
     }
     
     private void deleteTranLogFiles() {
-        File file = new File ("D:\\neoDB\\tm_tx_log.1");
+        File file = new File (m_DbLocation + "\\tm_tx_log.1");
         if (file.exists()) {
             file.delete();
         }
