@@ -21,15 +21,16 @@ public class Neo4JTestClient {
     public static void performNewImport() throws IOException {
     
         String db = "/refinedDB";
+        
 //        Importer componentImporter = new Importer(db, true);
 //        componentImporter.importFile(FileType.Components, "C:\\Users\\jthomson\\Desktop\\CoderData\\Components.csv");
 //        
 //        Importer termImporter = new Importer(db, false);
 //        termImporter.importFile(FileType.Terms, "C:\\Users\\jthomson\\Desktop\\CoderData\\Terms.csv");
 //        
-        Importer termRelImporter = new Importer(db, false);
-        termRelImporter.importFile(FileType.TermRels,"C:\\Users\\jthomson\\Desktop\\CoderData\\TermRels.csv");
-        
+//        Importer termRelImporter = new Importer(db, false);
+//        termRelImporter.importFile(FileType.TermRels,"C:\\Users\\jthomson\\Desktop\\CoderData\\TermRels.csv");
+//        
         Importer termCompRelImporter = new Importer(db, false);
         termCompRelImporter.importFile(FileType.TermComponentRels,"C:\\Users\\jthomson\\Desktop\\CoderData\\TermComponentRels.csv");
     }

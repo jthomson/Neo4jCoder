@@ -240,10 +240,8 @@ public class Importer {
         
         if (componentNode == null) {
             m_NumMissingComponentsinRelationships++;
-            System.out.println(String.format("componentNode not found. code=%s, componentType=%s, component=%s, level=%s", code, componentType, component, level));
+            System.out.println(String.format("componentNode not found. code=%s, componentType=%s, component=%s, level=%s", code, componentType, component, level));    
             return;
-            
-            //throw new InvalidActivityException("Component is null in addTermComponentRelationship!");        
         }
         if (codeNode == null) {
             m_NumMissingCodesinRelationships++;
@@ -601,7 +599,7 @@ public class Importer {
         node.setProperty(Constants.Node.Type, Constants.Node.English);
         node.setProperty(Constants.Property.EnglishText, value);
         
-        m_EnglishTextIndex.add(node, Constants.Property.EnglishText, value);
+        m_EnglishTextIndex.add(node, Constants.Property.EnglishText, value.toLowerCase());
         m_NumAddedEnglishNodes++;
          
         return node;
@@ -618,7 +616,7 @@ public class Importer {
         codeNode.setProperty(Constants.Node.Type, Constants.Node.Base);
         codeNode.setProperty(Constants.Property.Code, code);
         
-        if (addToIndex) m_CodeIndex.add(codeNode, Constants.Property.CodeNodeKey, code);
+        if (addToIndex) m_CodeIndex.add(codeNode, Constants.Property.CodeNodeKey, code.toLowerCase());
         
         m_NumAddedCodeNodes++;
         
@@ -627,7 +625,7 @@ public class Importer {
     
     private Node getEnglishNodeByText(String text) {
      
-        return m_EnglishTextIndex.get(Constants.Property.EnglishText, text).getSingle();   
+        return m_EnglishTextIndex.get(Constants.Property.EnglishText, text.toLowerCase()).getSingle();   
     }
     
     /***
@@ -638,7 +636,7 @@ public class Importer {
      */
     private Node getCodeNodeByCode(String code) {
         
-        return m_CodeIndex.get(Constants.Property.CodeNodeKey, code).getSingle();
+        return m_CodeIndex.get(Constants.Property.CodeNodeKey, code.toLowerCase()).getSingle();
     }
     
     /*

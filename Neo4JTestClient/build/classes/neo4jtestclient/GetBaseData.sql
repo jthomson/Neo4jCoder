@@ -76,7 +76,7 @@ select ComponentName from
 	from MedicalDictTermComponents mdtc 
 	inner join MedicalDictionaryLevel l on l.MedicalDictionaryID=mdtc.MedicalDictionaryID
 	inner join ComponentEngStrings C_ENG ON C_ENG.Id = mdtc.ENGStringID
-	where mdtc.FromVersionOrdinal=1 and mdtc.ToVersionOrdinal=2
+	where 1 between mdtc.FromVersionOrdinal and mdtc.ToVersionOrdinal
 	and (l.DictionaryLevelId=@mplevelid or l.DictionaryLevelId=@inglevelid)
 ) as componentoutput
 where rtrim(componentoutput.ComponentName) <> ''
@@ -95,7 +95,7 @@ select Component, ComponentType, Code, Level from
 	join medicaldictionaryterm t on mdtc.TermID=t.TermId
 	join MedicalDictComponentTypes ctypes on ctypes.ComponentTypeID=mdtc.ComponentTypeID
 	join ComponentEngStrings ces on ces.Id=mdtc.ENGStringID
-	where mdtc.FromVersionOrdinal=1 and mdtc.ToVersionOrdinal=2
+	where 1 between mdtc.FromVersionOrdinal and mdtc.ToVersionOrdinal
 	and (t.DictionaryLevelId=@mplevelid or t.DictionaryLevelId=@inglevelid)
 ) as results
 where rtrim(Component)<>''
